@@ -13,6 +13,7 @@ import { loadWavStereo } from './wav';
 import { analyzeFrames } from './frames';
 import { analyzeWithBranches } from './branches';
 import { decodeChords } from './decode';
+import { transcribeNotes } from './notes';
 import { validateAnalysis, type SongAnalysis } from './schema';
 
 function argVal(args: string[], ...names: string[]): string | undefined {
@@ -62,6 +63,9 @@ function main(): void {
   const audioSeconds = mono.length / sampleRate;
   const chords = decodeChords(frames, {}, 4096 / sampleRate);
   console.log(`  decoded ${chords.length} chord events`);
+  const t1 = performance.now();
+  const notes = transcribeNotes(mono, { sampleRate });
+  console.log(`  transcribed ${notes.length} note events in ${((performance.now() - t1) / 1000).toFixed(1)}s`);
   const analysis: SongAnalysis = {
     source: { type: 'file', fileName: input.split('/').pop() ?? input, duration: audioSeconds },
     meta: {
@@ -75,7 +79,7 @@ function main(): void {
     },
     frames,
     chords,
-    notes: [],
+    notes,
   };
   const errors = validateAnalysis(analysis);
   if (errors.length > 0) {
