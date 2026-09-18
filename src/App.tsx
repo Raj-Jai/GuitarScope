@@ -36,7 +36,7 @@ export default function App() {
         <ChordPanel chord={audio.chord} chordName={audio.chordName} running={running} />
       </main>
 
-      <SignalCanvas analyser={audio.analyser} demoFrameRef={audio.demoFrameRef} listening={running} />
+      <SignalCanvas analyser={audio.analyser} listening={running} />
 
       <footer className="app-footer">
         <span>Mic → AudioWorklet → DSP Worker → UI · YIN pitch + harmonic-subtraction chords</span>

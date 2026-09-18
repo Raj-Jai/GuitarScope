@@ -58,6 +58,10 @@ Useful scripts:
    confidence, notes (*A C E*), close alternatives, and a fretboard diagram
    for common open shapes. Chord display settles in ~0.3–1 s by design
    (341 ms analysis window + confirmation), while the tuner stays at ~85 ms.
+4. **Hear the demo** — *Play demo signal* is audible: the same scheduled
+   source feeds both your speakers and the analyzer (demo is a virtual
+   microphone through the real AudioWorklet → Worker path), so what you
+   hear is exactly what is analyzed.
 4. **Chord rate** — switch 2/4/8 Hz analysis cadence live; watch the
    queue/dropped counters stay at zero.
 5. **Uncertainty** — silence shows *No signal*, weak/polyphonic input on the
@@ -119,6 +123,13 @@ Synthetic guitar-like signals (harmonic series + noise), desktop:
 | Live worker turnaround @ 12 results/s | ~3–6 ms, queue 0, drops 0 |
 | End-to-end capture → UI (steady state) | ~4–6 ms + 85 ms frame fill |
 | Strum → stable chord display | ~0.3–1.0 s |
+
+> Note: the End-to-end stat mixes the audio-capture clock with the UI
+> clock. Under headless Chrome's fake/null audio devices the two clocks
+> skew by a constant ~0.9 s (identical on mic and demo paths, constant
+> over time, queues empty — an environment artifact, not app latency).
+> On real hardware with a real audio clock they track; there, queue
+> depth and dropped frames are the primary health signals.
 
 Browser validation: headless-Chrome runs through real audio plumbing
 (demo path + file-backed fake microphone) — all six open strings and

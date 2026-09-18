@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';import { MicController, MicError } from '../lib/audio/microphone';
-import {
-  CHORD_CADENCE_HZ,
-  PITCH_FRAME_SIZE,
-} from '../lib/audio/audio-constants';
+import { DemoProgram } from '../lib/audio/demo-program';
+import { CHORD_CADENCE_HZ } from '../lib/audio/audio-constants';
 import type {
   MainToWorkerMessage,
   WorkerResultMessage,
@@ -14,7 +12,6 @@ import type { ChordResult } from '../lib/analysis/polyphonic';
 import { TunerSmoother } from '../lib/analysis/tuner-smoother';
 import { LabelStabilizer } from '../lib/analysis/temporal-smoothing';
 import { ChordStabilityGate } from '../lib/analysis/chord-stability';
-import { chordTone, harmonicTone } from '../lib/dsp/synth';
 
 export type AudioStatus =
   | 'idle'
@@ -58,29 +55,6 @@ const INITIAL_STATS: LiveStats = {
   chordCadenceHz: CHORD_CADENCE_HZ,
 };
 
-/** Demo program: open strings then common chords (synthetic, real DSP path). */
-const DEMO_NOTES = [82.4069, 110, 146.8318, 195.9977, 246.9417, 329.6276];
-const DEMO_CHORDS: number[][] = [
-  [110, 138.5913, 164.8138], // A
-  [82.4069, 103.8262, 123.4708], // E
-  [146.8318, 185.0, 220.0], // D
-  [98.0, 123.4708, 146.8318], // G
-  [130.8128, 164.8138, 196.0], // C
-  [110, 130.8128, 164.8138], // Am
-  [82.4069, 98.0, 123.4708], // Em
-];
-
-function buildDemoBuffers(sampleRate: number): Float32Array[] {
-  const out: Float32Array[] = [];
-  for (const f of DEMO_NOTES) {
-    out.push(harmonicTone(f, { sampleRate, duration: 1.6 }));
-  }
-  for (const freqs of DEMO_CHORDS) {
-    out.push(chordTone(freqs, { sampleRate, duration: 1.8 }));
-  }
-  return out;
-}
-
 export function useGuitarAudio(): {
   status: AudioStatus;
   micError: MicError | null;
@@ -90,11 +64,9 @@ export function useGuitarAudio(): {
   chordName: string | null;
   stats: LiveStats;
   analyser: AnalyserNode | null;
-  /** Latest demo frame for visualization (ref: no re-renders). Null when idle/mic. */
-  demoFrameRef: { current: Float32Array | null };
   startMic: () => Promise<void>;
   stop: () => Promise<void>;
-  startDemo: () => void;
+  startDemo: () => Promise<void>;
   setChordCadence: (hz: number) => void;
 } {
   const [status, setStatus] = useState<AudioStatus>('idle');
@@ -108,14 +80,13 @@ export function useGuitarAudio(): {
 
   const workerRef = useRef<Worker | null>(null);
   const micRef = useRef<MicController | null>(null);
-  const demoTimerRef = useRef<number | null>(null);
+  const demoRef = useRef<DemoProgram | null>(null);
   const smootherRef = useRef(new TunerSmoother());
   const noteStabRef = useRef(new LabelStabilizer(5));
   const chordGateRef = useRef(new ChordStabilityGate());
   const resultTimesRef = useRef<number[]>([]);
   const readyRef = useRef(false);
   const chordCadenceRef = useRef(CHORD_CADENCE_HZ);
-  const demoFrameRef = useRef<Float32Array | null>(null);
   const statusRef = useRef<AudioStatus>('idle');
   useEffect(() => {
     statusRef.current = status;
@@ -218,11 +189,10 @@ export function useGuitarAudio(): {
     setAnalyser(null);
   }, []);
 
-  const stopDemoFrames = useCallback(() => {
-    if (demoTimerRef.current !== null) {
-      window.clearInterval(demoTimerRef.current);
-      demoTimerRef.current = null;
-    }
+  const teardownDemo = useCallback(async () => {
+    await demoRef.current?.stop().catch(() => undefined);
+    demoRef.current = null;
+    setAnalyser(null);
   }, []);
 
   const resetDisplay = useCallback(() => {
@@ -230,28 +200,28 @@ export function useGuitarAudio(): {
     noteStabRef.current.reset();
     chordGateRef.current.reset();
     resultTimesRef.current = [];
-    demoFrameRef.current = null;
     setPitch(null);
     setChord(null);
     setChordName(null);
   }, []);
 
   const stop = useCallback(async () => {
-    stopDemoFrames();
     setDemoMode(false);
     workerRef.current?.postMessage({ type: 'stop' } satisfies MainToWorkerMessage);
+    await teardownDemo();
     await teardownMic();
     setStatus('stopped');
-  }, [stopDemoFrames, teardownMic]);
+  }, [teardownDemo, teardownMic]);
 
   const startMic = useCallback(async () => {
     if (statusRef.current === 'starting' || statusRef.current === 'running') return;
     setStatus('starting');
     setMicError(null);
     setDemoMode(false);
-    stopDemoFrames();
     resetDisplay();
     try {
+      // Demo and microphone are mutually exclusive (no interleaved frames).
+      await teardownDemo();
       const mic = new MicController();
       micRef.current = mic;
       let seq = 0;
@@ -270,40 +240,45 @@ export function useGuitarAudio(): {
       setStatus('error');
       await teardownMic();
     }
-  }, [stopDemoFrames, resetDisplay, teardownMic, ensureWorker, postFrame]);
+  }, [resetDisplay, teardownDemo, teardownMic, ensureWorker, postFrame]);
 
-  const startDemo = useCallback(() => {
+  const startDemo = useCallback(async () => {
     if (statusRef.current === 'running' && demoMode) return;
-    setMicError(null);
-    setDemoMode(true);
-    setStatus('running');
-    resetDisplay();
-    // Demo and microphone are mutually exclusive (no interleaved frames).
-    void teardownMic().then(() => {
-      const sampleRate = 48000;
-      const worker = ensureWorker(sampleRate);
-      worker.postMessage({ type: 'start' } satisfies MainToWorkerMessage);
-      const buffers = buildDemoBuffers(sampleRate);
-      let item = 0;
-      let offset = 0;
+    // Create the AudioContext SYNCHRONOUSLY in the click handler so the
+    // browser ties resume() to the user gesture (autoplay policy).
+    let demo: DemoProgram;
+    try {
       let seq = 0;
-      stopDemoFrames();
-      // Real-time cadence: one 4096-frame per ~85ms.
-      demoTimerRef.current = window.setInterval(() => {
-        const buf = buffers[item];
-        const frame = new Float32Array(PITCH_FRAME_SIZE);
-        const n = Math.min(PITCH_FRAME_SIZE, buf.length - offset);
-        frame.set(buf.subarray(offset, offset + n));
-        offset += n;
-        if (offset >= buf.length) {
-          item = (item + 1) % buffers.length;
-          offset = 0;
-        }
-        demoFrameRef.current = frame;
-        postFrame(frame, performance.now(), seq++);
-      }, (PITCH_FRAME_SIZE / sampleRate) * 1000);
-    });
-  }, [demoMode, resetDisplay, teardownMic, ensureWorker, stopDemoFrames, postFrame]);
+      demo = new DemoProgram({
+        onWorkletFrame: (frame, capturePerf) => {
+          postFrame(frame, capturePerf, seq++);
+        },
+      });
+    } catch {
+      setMicError(new MicError('not-supported', 'Demo audio is not supported in this browser.'));
+      setStatus('error');
+      return;
+    }
+    setStatus('starting');
+    setMicError(null);
+    resetDisplay();
+    try {
+      // Demo and microphone are mutually exclusive (no interleaved frames).
+      await teardownMic();
+      demoRef.current = demo;
+      await demo.start();
+      ensureWorker(demo.sampleRate);
+      workerRef.current?.postMessage({ type: 'start' } satisfies MainToWorkerMessage);
+      setAnalyser(demo.analyser);
+      setStats((s) => ({ ...s, sampleRate: demo.sampleRate }));
+      setDemoMode(true);
+      setStatus('running');
+    } catch (err) {
+      setMicError(err instanceof Error ? new MicError('unknown', err.message) : new MicError('unknown', String(err)));
+      setStatus('error');
+      await teardownDemo();
+    }
+  }, [demoMode, resetDisplay, teardownMic, teardownDemo, ensureWorker, postFrame]);
 
   const setChordCadence = useCallback((hz: number) => {
     chordCadenceRef.current = hz;
@@ -313,10 +288,10 @@ export function useGuitarAudio(): {
 
   useEffect(
     () => () => {
-      if (demoTimerRef.current !== null) window.clearInterval(demoTimerRef.current);
       workerRef.current?.terminate();
       workerRef.current = null;
       void micRef.current?.stop().catch(() => undefined);
+      void demoRef.current?.stop().catch(() => undefined);
     },
     [],
   );
@@ -330,7 +305,6 @@ export function useGuitarAudio(): {
     chordName,
     stats,
     analyser,
-    demoFrameRef,
     startMic,
     stop,
     startDemo,

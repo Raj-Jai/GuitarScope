@@ -1,26 +1,22 @@
 import { useEffect, useRef } from 'react';
-import { magnitudeSpectrum } from '../lib/dsp/fft';
-import { applyHannWindow, removeDcOffset } from '../lib/dsp/windowing';
 
 /**
- * Waveform + spectrum canvases, drawn imperatively on rAF (no React
- * re-renders per animation frame). Sources: live AnalyserNode (mic) or
- * the latest demo frame (synthetic path).
+ * Waveform + spectrum canvases driven by AnalyserNode on rAF.
+ * Draws imperatively (no React re-renders per animation frame).
+ * Both mic and (audible) demo modes provide an analyser tap.
  */
 export function SignalCanvas({
   analyser,
-  demoFrameRef,
   listening,
 }: {
   analyser: AnalyserNode | null;
-  demoFrameRef: { current: Float32Array | null };
   listening: boolean;
 }) {
   const waveRef = useRef<HTMLCanvasElement>(null);
   const specRef = useRef<HTMLCanvasElement>(null);
-  const sourceRef = useRef({ analyser, demoFrameRef });
+  const analyserRef = useRef<AnalyserNode | null>(null);
   useEffect(() => {
-    sourceRef.current = { analyser, demoFrameRef };
+    analyserRef.current = analyser;
   });
 
   useEffect(() => {
@@ -37,9 +33,7 @@ export function SignalCanvas({
 
     const draw = () => {
       raf = requestAnimationFrame(draw);
-      const { analyser: an, demoFrameRef: ref } = sourceRef.current;
-      const demoFrame = !an ? ref.current : null;
-      if (!an && !demoFrame) return; // idle: leave canvases blank
+      const an = analyserRef.current;
       const w = wave.clientWidth;
       const h = wave.clientHeight;
       if (wave.width !== w * 2) {
@@ -50,8 +44,16 @@ export function SignalCanvas({
         spec.width = w * 2;
         spec.height = h * 2;
       }
-      drawWave(wctx, w, h, an, demoFrame, timeData);
-      drawSpectrum(sctx, w, h, an, demoFrame, freqData);
+      if (!an) {
+        // Idle/stopped: clear stale frames instead of freezing them.
+        wctx.setTransform(2, 0, 0, 2, 0, 0);
+        wctx.clearRect(0, 0, w, h);
+        sctx.setTransform(2, 0, 0, 2, 0, 0);
+        sctx.clearRect(0, 0, w, h);
+        return;
+      }
+      drawWave(wctx, w, h, an, timeData);
+      drawSpectrum(sctx, w, h, an, freqData);
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
@@ -79,26 +81,18 @@ function drawWave(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
-  analyser: AnalyserNode | null,
-  demoFrame: Float32Array | null,
+  analyser: AnalyserNode,
   scratch: Float32Array<ArrayBuffer>,
 ): void {
-  let data: ArrayLike<number> = scratch;
-  if (analyser) {
-    analyser.getFloatTimeDomainData(scratch);
-  } else if (demoFrame) {
-    data = demoFrame;
-  } else {
-    return;
-  }
+  analyser.getFloatTimeDomainData(scratch);
   ctx.setTransform(2, 0, 0, 2, 0, 0);
   ctx.clearRect(0, 0, w, h);
   ctx.strokeStyle = '#7dd3a8';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  const step = Math.max(1, Math.floor(data.length / w));
+  const step = Math.max(1, Math.floor(scratch.length / w));
   for (let x = 0; x < w; x++) {
-    const v = data[Math.min(data.length - 1, x * step)];
+    const v = scratch[Math.min(scratch.length - 1, x * step)];
     const y = h / 2 - v * (h / 2 - 4);
     if (x === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
@@ -115,58 +109,31 @@ function drawSpectrum(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
-  analyser: AnalyserNode | null,
-  demoFrame: Float32Array | null,
+  analyser: AnalyserNode,
   scratch: Float32Array<ArrayBuffer>,
 ): void {
+  analyser.getFloatFrequencyData(scratch);
+  const sampleRate = analyser.context.sampleRate;
+  const minF = 40;
+  const hi = Math.min(4000, sampleRate / 2);
   ctx.setTransform(2, 0, 0, 2, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  const minF = 40;
-  const maxF = 4000;
-  const sampleRate = analyser ? analyser.context.sampleRate : 48000;
-  const hi = Math.min(maxF, sampleRate / 2);
+  ctx.fillStyle = '#c084fc';
+  const binHz = sampleRate / analyser.fftSize;
   const toX = (f: number) =>
     ((Math.log(f) - Math.log(minF)) / (Math.log(hi) - Math.log(minF))) * w;
-  ctx.fillStyle = '#c084fc';
-
-  if (analyser) {
-    analyser.getFloatFrequencyData(scratch);
-    const binHz = sampleRate / analyser.fftSize;
-    const toY = (db: number) => {
-      const clamped = Math.max(-100, Math.min(-20, db));
-      return h - ((clamped + 100) / 80) * h;
-    };
-    let prevX = -1;
-    for (let k = 1; k < scratch.length; k++) {
-      const f = k * binHz;
-      if (f < minF || f > hi) continue;
-      const x = Math.floor(toX(f));
-      if (x === prevX) continue;
-      prevX = x;
-      const y = toY(scratch[k]);
-      ctx.fillRect(x, y, 1, h - y);
-    }
-    return;
-  }
-
-  if (demoFrame) {
-    // Lightweight main-thread FFT of the latest demo frame (4096pt, ~1ms).
-    const copy = new Float32Array(demoFrame);
-    const mag = magnitudeSpectrum(applyHannWindow(removeDcOffset(copy)));
-    let peak = 0;
-    for (let k = 0; k < mag.length; k++) if (mag[k] > peak) peak = mag[k];
-    if (peak <= 0) return;
-    const binHz = sampleRate / demoFrame.length;
-    let prevX = -1;
-    for (let k = 1; k < mag.length; k++) {
-      const f = k * binHz;
-      if (f < minF || f > hi) continue;
-      const x = Math.floor(toX(f));
-      if (x === prevX) continue;
-      prevX = x;
-      const norm = mag[k] / peak; // 0..1
-      const barH = norm * (h - 6);
-      ctx.fillRect(x, h - barH, 1, barH);
-    }
+  const toY = (db: number) => {
+    const clamped = Math.max(-100, Math.min(-20, db));
+    return h - ((clamped + 100) / 80) * h;
+  };
+  let prevX = -1;
+  for (let k = 1; k < scratch.length; k++) {
+    const f = k * binHz;
+    if (f < minF || f > hi) continue;
+    const x = Math.floor(toX(f));
+    if (x === prevX) continue;
+    prevX = x;
+    const y = toY(scratch[k]);
+    ctx.fillRect(x, y, 1, h - y);
   }
 }

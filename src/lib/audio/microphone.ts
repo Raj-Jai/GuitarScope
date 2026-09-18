@@ -10,7 +10,8 @@ import { PITCH_FRAME_SIZE } from './audio-constants';
 import processorSource from '../../worklets/capture-processor.js?raw';
 
 let cachedProcessorUrl: string | null = null;
-function getProcessorUrl(): string {
+/** Blob URL of the self-contained capture processor (shared with demo). */
+export function getProcessorUrl(): string {
   if (!cachedProcessorUrl) {
     cachedProcessorUrl = URL.createObjectURL(
       new Blob([processorSource], { type: 'application/javascript' }),
