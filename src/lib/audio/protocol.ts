@@ -37,6 +37,8 @@ export interface WorkerResultMessage {
   pitchProcessingMs: number;
   chordProcessingMs: number;
   ranChord: boolean;
+  /** Attack gate suppressed a due chord run (display should hold). */
+  chordHeld: boolean;
   pitch: DetectionResult;
   chord: ChordResult | null;
 }

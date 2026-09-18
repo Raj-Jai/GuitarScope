@@ -5,6 +5,7 @@
  */
 import { detectPitch, type DetectionResult } from '../pitch/pitch-detector';
 import { detectChord, type ChordResult } from './polyphonic';
+import { rms } from '../dsp/synth';
 
 export interface EngineConfig {
   sampleRate: number;
@@ -24,6 +25,8 @@ export interface EngineResult {
   pitchProcessingMs: number;
   chordProcessingMs: number;
   ranChord: boolean;
+  /** True when a chord run was due but suppressed by the attack gate (display holds). */
+  chordHeld: boolean;
   pitch: DetectionResult;
   chord: ChordResult | null;
 }
@@ -39,6 +42,8 @@ export class DspEngine {
   private ringFill = 0; // total samples ever appended (monotonic)
   private lastChordAtFill = 0;
   private lastChord: ChordResult | null = null;
+  private prevChordRms = 0;
+  private holdUntilFill = 0;
   private framesProcessed = 0;
   private chordsRun = 0;
 
@@ -80,19 +85,37 @@ export class DspEngine {
     let chord = this.lastChord;
     let chordProcessingMs = 0;
     let ranChord = false;
+    let chordHeld = false;
     const chordIntervalSamples =
       this.sampleRate / Math.max(1, this.chordCadenceHz);
     if (
       this.ringFill >= this.chordWindowSize &&
       this.ringFill - this.lastChordAtFill >= chordIntervalSamples
     ) {
-      const t1 = performance.now();
-      chord = detectChord(this.ring, { sampleRate: this.sampleRate });
-      chordProcessingMs = performance.now() - t1;
-      this.lastChord = chord;
-      this.lastChordAtFill = this.ringFill;
-      this.chordsRun++;
-      ranChord = true;
+      // Attack gate: a fresh onset's broadband transient corrupts chroma.
+      // Hold the previous chord briefly instead of classifying the attack.
+      // The level reference updates on EVERY due check (run or hold) so a
+      // hold can never latch forever on a stale baseline.
+      const level = rms(this.ring);
+      const quietBaseline = this.prevChordRms < 0.01;
+      const onset =
+        level > 0.015 &&
+        (quietBaseline ? level > 0.05 : level / Math.max(1e-6, this.prevChordRms) > 3.5);
+      this.prevChordRms = level;
+      if (onset) {
+        this.holdUntilFill = this.ringFill + Math.floor(this.sampleRate * 0.15);
+      }
+      if (this.ringFill < this.holdUntilFill) {
+        chordHeld = true;
+      } else {
+        const t1 = performance.now();
+        chord = detectChord(this.ring, { sampleRate: this.sampleRate });
+        chordProcessingMs = performance.now() - t1;
+        this.lastChord = chord;
+        this.lastChordAtFill = this.ringFill;
+        this.chordsRun++;
+        ranChord = true;
+      }
     }
 
     this.framesProcessed++;
@@ -103,6 +126,7 @@ export class DspEngine {
       pitchProcessingMs,
       chordProcessingMs,
       ranChord,
+      chordHeld,
       pitch,
       chord,
     };
@@ -128,5 +152,7 @@ export class DspEngine {
     this.ringFill = 0;
     this.lastChordAtFill = 0;
     this.lastChord = null;
+    this.prevChordRms = 0;
+    this.holdUntilFill = 0;
   }
 }

@@ -13,6 +13,7 @@ import type { DetectionResult } from '../lib/pitch/pitch-detector';
 import type { ChordResult } from '../lib/analysis/polyphonic';
 import { TunerSmoother } from '../lib/analysis/tuner-smoother';
 import { LabelStabilizer } from '../lib/analysis/temporal-smoothing';
+import { ChordStabilityGate } from '../lib/analysis/chord-stability';
 import { chordTone, harmonicTone } from '../lib/dsp/synth';
 
 export type AudioStatus =
@@ -110,7 +111,7 @@ export function useGuitarAudio(): {
   const demoTimerRef = useRef<number | null>(null);
   const smootherRef = useRef(new TunerSmoother());
   const noteStabRef = useRef(new LabelStabilizer(5));
-  const chordStabRef = useRef(new LabelStabilizer(7));
+  const chordGateRef = useRef(new ChordStabilityGate());
   const resultTimesRef = useRef<number[]>([]);
   const readyRef = useRef(false);
   const chordCadenceRef = useRef(CHORD_CADENCE_HZ);
@@ -134,10 +135,15 @@ export function useGuitarAudio(): {
     );
     setPitch({ ...p, displayCents, stableNote });
 
-    if (msg.ranChord) {
+    // Attack gate (chordHeld): hold the displayed chord, no stabilization input.
+    if (msg.ranChord && !msg.chordHeld) {
       const c = msg.chord;
-      const label = c && c.status === 'CHORD_DETECTED' && c.chord ? c.chord.name : null;
-      setChordName(chordStabRef.current.push(c && c.status === 'CHORD_DETECTED' ? label : null));
+      const detected = c && c.status === 'CHORD_DETECTED' ? (c.chord ?? null) : null;
+      setChordName(
+        chordGateRef.current.push(
+          detected ? { name: detected.name, confidence: c?.confidence ?? 0 } : null,
+        ),
+      );
       setChord(c);
     }
 
@@ -222,7 +228,7 @@ export function useGuitarAudio(): {
   const resetDisplay = useCallback(() => {
     smootherRef.current.reset();
     noteStabRef.current.reset();
-    chordStabRef.current.reset();
+    chordGateRef.current.reset();
     resultTimesRef.current = [];
     demoFrameRef.current = null;
     setPitch(null);

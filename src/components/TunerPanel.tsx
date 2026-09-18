@@ -1,4 +1,5 @@
 import type { LivePitch } from '../hooks/useGuitarAudio';
+import { describeStringClaim } from '../lib/guitar/tuning';
 
 function tuningClass(p: LivePitch): string {
   if (p.note === null) return 'idle';
@@ -21,8 +22,12 @@ function statusText(p: LivePitch | null, running: boolean): string {
     case 'UNCERTAIN':
       return 'Low confidence';
     case 'NOTE_DETECTED':
-    case 'OCTAVE_CORRECTED':
-      return p.openString ? 'Open string' : 'Note detected';
+    case 'OCTAVE_CORRECTED': {
+      const claim = describeStringClaim(p.openString, p.stringCents ?? 999);
+      if (claim === 'open-match') return 'Open string';
+      if (claim === 'near-open') return 'Near open string';
+      return 'Note detected';
+    }
     default:
       return 'Listening…';
   }
@@ -89,7 +94,17 @@ export function TunerPanel({
         <div className="tuner-cell">
           <span className="label">String</span>
           <span className="value" data-testid="tuner-string">
-            {pitch?.stringNumber != null ? `${pitch.stringNumber}${ordinal(pitch.stringNumber)} string` : '—'}
+            {pitch?.stringNumber != null ? (
+              <>
+                {pitch.stringNumber}
+                {ordinal(pitch.stringNumber)} string
+                {describeStringClaim(pitch.openString, pitch.stringCents ?? 999) === 'nearest' && (
+                  <span className="value dim"> (nearest)</span>
+                )}
+              </>
+            ) : (
+              '—'
+            )}
           </span>
         </div>
         <div className="tuner-cell">

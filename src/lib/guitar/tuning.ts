@@ -56,6 +56,23 @@ export function identifyString(
 
 export type TuningState = 'IN_TUNE' | 'CLOSE' | 'FLAT' | 'SHARP';
 
+/** How strongly the UI may claim a string identification. */
+export type StringClaim = 'open-match' | 'near-open' | 'nearest';
+
+/**
+ * open-match: close enough to call it that open string (tuning applies).
+ * near-open: within the open-string tolerance but too far for tuning talk.
+ * nearest: a fretted/other note — the string is only the closest candidate.
+ */
+export function describeStringClaim(
+  isOpenString: boolean,
+  centsFromOpen: number,
+  matchCents = 15,
+): StringClaim {
+  if (!isOpenString) return 'nearest';
+  return Math.abs(centsFromOpen) <= matchCents ? 'open-match' : 'near-open';
+}
+
 /**
  * Tuning verdict for an open string.
  * inTuneCents default 5, closeCents default 15.

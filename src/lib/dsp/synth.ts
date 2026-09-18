@@ -60,6 +60,8 @@ export interface ToneOptions {
   phase?: number;
   /** Simple exponential decay per second (0 = none). */
   decay?: number;
+  /** Linear fade-in seconds (pick-attack modeling, 0 = none). */
+  attack?: number;
   /** White-noise amplitude mixed in (0 = none). */
   noiseLevel?: number;
   seed?: number;
@@ -85,6 +87,7 @@ export function harmonicTone(
     amplitude = 0.8,
     phase = 0,
     decay = 0,
+    attack = 0,
     noiseLevel = 0,
     seed = 1234,
   } = options;
@@ -98,12 +101,13 @@ export function harmonicTone(
   for (let i = 0; i < length; i++) {
     const t = i / sampleRate;
     const envelope = decay > 0 ? Math.exp(-decay * t) : 1;
+    const attackGain = attack > 0 ? Math.min(1, t / attack) : 1;
     let s = 0;
     for (const h of harmonics) {
       s += h.amplitude * Math.sin(2 * Math.PI * fundamental * h.harmonic * t + phase);
     }
     if (noiseLevel > 0) s += (rng() * 2 - 1) * noiseLevel * stackPeak;
-    out[i] = s * gain * envelope;
+    out[i] = s * gain * envelope * attackGain;
   }
   return out;
 }
@@ -118,6 +122,7 @@ export function chordTone(
     duration = 0.5,
     harmonics = GUITAR_HARMONICS,
     amplitude = 0.8,
+    attack = 0,
     noiseLevel = 0,
     seed = 1234,
   } = options;
@@ -130,6 +135,7 @@ export function chordTone(
       duration,
       harmonics,
       amplitude: per,
+      attack,
     });
     for (let i = 0; i < length; i++) out[i] += part[i];
   }

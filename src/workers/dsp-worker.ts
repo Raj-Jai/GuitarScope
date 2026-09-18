@@ -40,6 +40,7 @@ function pump(): void {
         pitchProcessingMs: r.pitchProcessingMs,
         chordProcessingMs: r.chordProcessingMs,
         ranChord: r.ranChord,
+        chordHeld: r.chordHeld,
         pitch: r.pitch,
         chord: r.chord,
       });
