@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { extractVideoIdStrict } from '../../songlab-server/validate';
-import { buildYtDlpArgs, parseDownloadProgress } from '../../songlab-server/server';
+import { buildYtDlpArgs, parseDownloadProgress, selectEvictions } from '../../songlab-server/server';
 
 describe('extractVideoIdStrict', () => {
   test('accepts single-video URLs', () => {
@@ -68,5 +68,12 @@ describe('parseDownloadProgress', () => {
   test('non-progress lines ignored', () => {
     expect(parseDownloadProgress('[youtube] Downloading webpage')).toBeNull();
     expect(parseDownloadProgress('')).toBeNull();
+  });
+});
+
+describe('selectEvictions', () => {
+  test('keeps newest N, evicts oldest first', () => {
+    expect(selectEvictions(['a', 'b', 'c'], 5)).toEqual([]);
+    expect(selectEvictions(['a', 'b', 'c', 'd', 'e', 'f', 'g'], 5)).toEqual(['a', 'b']);
   });
 });

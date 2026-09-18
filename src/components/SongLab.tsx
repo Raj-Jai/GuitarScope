@@ -291,6 +291,14 @@ export function SongLab() {
   );
 
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
+  const setAudio = useCallback((url: string | null) => {
+    if (audioUrlRef.current && audioUrlRef.current.startsWith('blob:')) {
+      URL.revokeObjectURL(audioUrlRef.current);
+    }
+    audioUrlRef.current = url;
+    setAudioUrl(url);
+  }, []);
 
   const loadAudioFile = useCallback(
     async (file: File) => {
@@ -306,14 +314,14 @@ export function SongLab() {
         const mono = buf.numberOfChannels > 1 ? averageChannels(buf) : new Float32Array(ch0);
         const { resampleLinear: resample } = await import('../lib/dsp/resample');
         const samples = resample(mono, buf.sampleRate, 48000);
-        setAudioUrl(url);
+        setAudio(url);
         runAnalysis(samples, 48000, file.name);
       } catch (err) {
         setError(`Could not load audio: ${err instanceof Error ? err.message : String(err)}`);
         setPhase('error');
       }
     },
-    [runAnalysis, setAudioUrl],
+    [runAnalysis, setAudio],
   );
 
 
@@ -339,11 +347,11 @@ export function SongLab() {
     clockRef.current = { kind: 'audio' };
     const samples = demoSongSamples();
     const blob = encodeWavBlob(samples, 48000);
-    setAudioUrl(URL.createObjectURL(blob));
+    setAudio(URL.createObjectURL(blob));
     runAnalysis(samples, 48000, 'demo progression (G D Am C)');
-  }, [runAnalysis]);
+  }, [runAnalysis, setAudio]);
 
-  const attachPlayer = useCallback(async (id: string) => {
+  const attachPlayer = useCallback(async (id: string, opts?: { fallbackAudio?: boolean }) => {
     setYtError(null);
     try {
       await loadYouTubeAPI();
@@ -372,7 +380,20 @@ export function SongLab() {
       videoId: id,
       playerVars: { rel: 0 },
       events: {
-        onError: () => setYtError('YouTube player reported an error (video may restrict embedding).'),
+        onError: () => {
+          // Embed-restricted videos: fall back to retained local audio
+          // (server-analyzed songs) instead of leaving a dead player.
+          if (opts?.fallbackAudio && audioUrlRef.current) {
+            clockRef.current = { kind: 'audio' };
+            setPlayer('audio');
+            setYtError(
+              'This video blocks embedding, so the video panel is unavailable — ' +
+                'playing the analyzed audio instead, charts stay in sync.',
+            );
+          } else {
+            setYtError('YouTube player reported an error (video may restrict embedding).');
+          }
+        },
       },
     });
     setSourceLabel(`YouTube ${id} — charts follow the video`);
@@ -384,7 +405,9 @@ export function SongLab() {
       setYtError('That does not look like a YouTube URL.');
       return;
     }
-    await attachPlayer(id);
+    // Fallback allowed whenever local audio exists (e.g. demo analyzed):
+    // a dead embed then degrades to audio playback, never a stuck player.
+    await attachPlayer(id, { fallbackAudio: true });
   }, [ytUrl, attachPlayer]);
 
   // Local companion server (opt-in localhost backend for YouTube URLs).
@@ -432,6 +455,7 @@ export function SongLab() {
               detail?: string;
               error?: string;
               videoId?: string;
+              hasAudio?: boolean;
               analysis?: SongAnalysis;
             };
             if (job.status === 'complete' && job.analysis) {
@@ -446,7 +470,20 @@ export function SongLab() {
               });
               setJobProgress('');
               setPhase('ready');
-              await attachPlayer(job.videoId ?? id);
+              // Retained server audio lets the song play even when the
+              // video embed is blocked; the player falls back to it.
+              if (job.hasAudio) {
+                try {
+                  const audioRes = await fetch(`http://127.0.0.1:8765/api/jobs/${jobId}/audio`);
+                  if (audioRes.ok) {
+                    const blob = await audioRes.blob();
+                    setAudio(URL.createObjectURL(blob));
+                  }
+                } catch {
+                  /* playback falls back to video-only */
+                }
+              }
+              await attachPlayer(job.videoId ?? id, { fallbackAudio: true });
             } else if (job.status === 'error') {
               if (pollRef.current !== null) window.clearInterval(pollRef.current);
               pollRef.current = null;
@@ -474,7 +511,7 @@ export function SongLab() {
       setPhase('empty');
       setError(`Could not reach the local analyzer: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [ytUrl, checkServer, attachPlayer]);
+  }, [ytUrl, checkServer, attachPlayer, setAudio]);
 
   useEffect(
     () => () => {

@@ -11,7 +11,7 @@
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { execFile } from 'node:child_process';
-import { promises as fs } from 'node:fs';
+import { createReadStream, promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
@@ -92,6 +92,8 @@ interface Job {
   progress: number; // 0..1 within stage-weighted overall
   /** Human-readable in-stage detail, e.g. download speed/ETA. */
   detail?: string;
+  /** Playback audio retained for completed jobs (evicted oldest-first). */
+  hasAudio?: boolean;
   error?: string;
   analysis?: SongAnalysis;
   startedAt: number;
@@ -99,6 +101,21 @@ interface Job {
 
 const jobs = new Map<string, Job>();
 let running = 0;
+
+// Playback-audio retention: newest completions keep their 48k WAV so the
+// browser can play analyzed songs even when the video embed is blocked.
+const MAX_KEPT_AUDIO = 5;
+const audioOrder: string[] = [];
+
+/** Pure: which job dirs to evict keeping the newest `keep`. Unit-tested. */
+export function selectEvictions(ordered: string[], keep: number): string[] {
+  if (ordered.length <= keep) return [];
+  return ordered.slice(0, ordered.length - keep);
+}
+
+function jobDir(jobId: string): string {
+  return path.join(os.tmpdir(), 'guitarscope', jobId);
+}
 
 function sendJson(res: ServerResponse, code: number, body: unknown): void {
   const text = JSON.stringify(body);
@@ -191,7 +208,7 @@ async function cleanup(dir: string): Promise<void> {
 }
 
 async function processJob(job: Job): Promise<void> {
-  const dir = path.join(os.tmpdir(), 'guitarscope', job.jobId);
+  const dir = jobDir(job.jobId);
   await fs.mkdir(dir, { recursive: true });
   const fail = async (message: string): Promise<void> => {
     job.status = 'error';
@@ -287,7 +304,16 @@ async function processJob(job: Job): Promise<void> {
     job.status = 'complete';
     job.stage = 'complete';
     job.progress = 1;
-    await cleanup(dir);
+    // Retain the standardized WAV for browser playback; drop the raw download.
+    await fs.unlink(wavPath).catch(() => undefined);
+    job.hasAudio = true;
+    audioOrder.push(job.jobId);
+    for (const evictId of selectEvictions(audioOrder, MAX_KEPT_AUDIO)) {
+      audioOrder.splice(audioOrder.indexOf(evictId), 1);
+      const evictJob = jobs.get(evictId);
+      if (evictJob) evictJob.hasAudio = false;
+      await cleanup(jobDir(evictId));
+    }
   } catch (err) {
     await fail(err instanceof Error ? err.message : String(err));
   } finally {
@@ -371,6 +397,23 @@ export function createSongLabServer(): Server {
       }
       const { analysis, ...rest } = job;
       sendJson(res, 200, analysis ? { ...rest, analysis } : rest);
+      return;
+    }
+    // Retained playback audio for completed jobs (evicted oldest-first).
+    const audioMatch = /^\/api\/jobs\/([\w-]+)\/audio$/.exec(url.pathname);
+    if (req.method === 'GET' && audioMatch) {
+      const job = jobs.get(audioMatch[1]);
+      const file = job ? path.join(jobDir(job.jobId), 'audio48.wav') : '';
+      try {
+        if (!job || job.status !== 'complete' || !job.hasAudio) throw new Error('missing');
+        const stat = await fs.stat(file);
+        if (stat.size === 0) throw new Error('missing');
+        res.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': stat.size });
+        createReadStream(file).pipe(res);
+      } catch {
+        if (!res.headersSent) sendJson(res, 404, { error: 'No retained audio for this job.' });
+        else res.end();
+      }
       return;
     }
     sendJson(res, 404, { error: 'Not found.' });

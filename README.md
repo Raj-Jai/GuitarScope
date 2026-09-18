@@ -53,7 +53,10 @@ npm run songlab:server   # localhost only (127.0.0.1:8765), one job at a time
 
 Then paste a single-video URL in Song Lab and click **Analyze**: the UI
 shows connection status, job progress (download → decode → analyze),
-and on completion loads the charts synced to the video. If the helper
+and on completion loads the charts synced to the video. The analyzed
+audio is retained server-side, so if the video blocks embedding,
+playback automatically falls back to the analyzed audio with charts
+still in sync. If the helper
 isn't running you'll see exactly how to start it. Guardrails: YouTube
 watch URLs only (no playlists/channels), 10-minute / 250 MB caps,
 fixed yt-dlp argument array (never a shell string), temp files always
