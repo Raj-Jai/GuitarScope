@@ -59,6 +59,14 @@ watch URLs only (no playlists/channels), 10-minute / 250 MB caps,
 fixed yt-dlp argument array (never a shell string), temp files always
 cleaned. Without the helper, audio-file upload works fully offline.
 
+If downloads fail with HTTP 403, YouTube is challenging automated
+retrieval from your network. In order: (1) update yt-dlp
+(`yt-dlp -U`) and retry; (2) if you are logged into YouTube in a
+browser, restart the helper with session cookies —
+`YTDLP_COOKIES_FROM_BROWSER=chrome npm run songlab:server`
+(use your browser name; env-only, never sent anywhere); (3) fall back
+to downloading the audio yourself and uploading the file.
+
 Analysis runs in a browser Worker (no server needed); the same pipeline
 exists as an offline CLI (`npm run analyze -- --input song.wav ...`,
 with a vocal-robust `--branches multi` mode). Details, fixture recipes

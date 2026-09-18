@@ -28,6 +28,35 @@ const MAX_DURATION_SEC = 600; // 10 minutes
 const MAX_BYTES = 250 * 1024 * 1024;
 const JOB_TIMEOUT_MS = 15 * 60 * 1000;
 const MAX_CONCURRENT = 1;
+// Optional, local-only: browser name for yt-dlp cookie extraction
+// (e.g. YTDLP_COOKIES_FROM_BROWSER=chrome). Env-only, never sent by the UI.
+const COOKIES_FROM_BROWSER = (process.env.YTDLP_COOKIES_FROM_BROWSER ?? '').trim().toLowerCase();
+const KNOWN_BROWSERS = new Set([
+  'chrome',
+  'chromium',
+  'firefox',
+  'edge',
+  'safari',
+  'brave',
+  'opera',
+  'vivaldi',
+  'whale',
+]);
+
+/** Fixed yt-dlp argument array (pure, unit-tested). No shell, no user input in flags. */
+export function buildYtDlpArgs(
+  url: string,
+  outTemplate: string,
+  cookiesFrom: string = COOKIES_FROM_BROWSER,
+): string[] {
+  const args = ['--no-playlist', '-x', '--audio-format', 'wav', '-o', outTemplate];
+  const browser = cookiesFrom.trim().toLowerCase();
+  if (browser && KNOWN_BROWSERS.has(browser)) {
+    args.push('--cookies-from-browser', browser);
+  }
+  args.push(url);
+  return args;
+}
 
 type Stage = 'queued' | 'downloading' | 'decoding' | 'analyzing' | 'complete' | 'error';
 
@@ -147,7 +176,7 @@ async function processJob(job: Job): Promise<void> {
     job.progress = 0;
     await runFile(
       'yt-dlp',
-      ['--no-playlist', '-x', '--audio-format', 'wav', '-o', path.join(dir, 'audio.%(ext)s'), job.url],
+      buildYtDlpArgs(job.url, path.join(dir, 'audio.%(ext)s')),
       (line) => {
         const m = /\[download\]\s+(\d+(?:\.\d+)?)%/.exec(line);
         if (m) job.progress = Math.min(0.99, Number(m[1]) / 100);
@@ -307,5 +336,8 @@ if (invokedAsMain) {
   server.listen(PORT, HOST, () => {
     console.log(`Song Lab companion listening on http://${HOST}:${PORT} (localhost only)`);
     console.log('Requires yt-dlp + ffmpeg on PATH. Temp files under os.tmpdir()/guitarscope, always cleaned.');
+    if (COOKIES_FROM_BROWSER) {
+      console.log(`Cookie mode: extracting YouTube session from ${COOKIES_FROM_BROWSER} (env YTDLP_COOKIES_FROM_BROWSER).`);
+    }
   });
 }
