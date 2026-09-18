@@ -27,6 +27,21 @@ all audio stays on your device.
 
 ![C major detected with notes, alternatives and diagram](docs/screenshots/chord-detection.png)
 
+## Song Lab — learn songs (chords + notes over time)
+
+The **Song Lab** tab turns full recordings into tutorials: upload any
+audio file (or analyze the built-in demo song in one click) and get a
+synced chord chart with playhead, piano-roll notes, loopable sections,
+0.5×/0.75× slowdown, and display transposition — plus optional
+YouTube-video sync (paste a URL; charts follow the video clock).
+
+![Song Lab tutorial view with synced chords and piano-roll notes](docs/screenshots/songlab.png)
+
+Analysis runs in a browser Worker (no server needed); the same pipeline
+exists as an offline CLI (`npm run analyze -- --input song.wav ...`,
+with a vocal-robust `--branches multi` mode). Details, fixture recipes
+and validation numbers: [`analyzer/README.md`](analyzer/README.md).
+
 ## Quick start
 
 Requirements: Node 18+, Chrome/Edge (or any Chromium browser) for the full

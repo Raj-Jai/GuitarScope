@@ -1,24 +1,22 @@
+import { useState } from 'react';
 import { useGuitarAudio } from './hooks/useGuitarAudio';
 import { TunerPanel } from './components/TunerPanel';
 import { ChordPanel } from './components/ChordPanel';
 import { SignalCanvas } from './components/SignalCanvas';
 import { ControlBar } from './components/ControlBar';
+import { SongLab } from './components/SongLab';
 
-export default function App() {
+function TunerView() {
   const audio = useGuitarAudio();
   const running = audio.status === 'running';
 
   return (
-    <div className="app">
-      <header className="app-header">
-        <div>
-          <h1>GuitarScope</h1>
-          <p className="tagline">Real-time tuner · note detector · chord detector</p>
-        </div>
+    <>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
         <div className={`live-dot ${running ? 'on' : ''}`} data-testid="live-dot" aria-label={running ? 'Listening' : 'Idle'}>
           {running ? '● LIVE' : '○ IDLE'}
         </div>
-      </header>
+      </div>
 
       <ControlBar
         status={audio.status}
@@ -41,6 +39,39 @@ export default function App() {
       </main>
 
       <SignalCanvas analyser={audio.analyser} listening={running} />
+    </>
+  );
+}
+
+export default function App() {
+  const [tab, setTab] = useState<'tuner' | 'songs'>('tuner');
+
+  return (
+    <div className="app">
+      <header className="app-header">
+        <div>
+          <h1>GuitarScope</h1>
+          <p className="tagline">Real-time tuner · note detector · chord detector · song lab</p>
+        </div>
+        <nav className="tabs" aria-label="Views">
+          <button
+            className={`tab${tab === 'tuner' ? ' active' : ''}`}
+            onClick={() => setTab('tuner')}
+            data-testid="tab-tuner"
+          >
+            Tuner
+          </button>
+          <button
+            className={`tab${tab === 'songs' ? ' active' : ''}`}
+            onClick={() => setTab('songs')}
+            data-testid="tab-songs"
+          >
+            Song Lab
+          </button>
+        </nav>
+      </header>
+
+      {tab === 'tuner' ? <TunerView /> : <SongLab />}
 
       <footer className="app-footer">
         <span>Mic → AudioWorklet → DSP Worker → UI · YIN pitch + harmonic-subtraction chords</span>

@@ -4,6 +4,9 @@
  * keeps channels (mono files yield null left/right). No dependencies.
  */
 import { readFileSync } from 'node:fs';
+import { resampleLinear } from '../src/lib/dsp/resample';
+
+export { resampleLinear };
 
 export interface LoadedAudio {
   samples: Float32Array; // mono
@@ -24,22 +27,7 @@ function readAscii(view: DataView, offset: number, length: number): string {
   return s;
 }
 
-/** Linear-interpolation resampler (fixtures are 48k anyway). */
-export function resampleLinear(samples: Float32Array, fromRate: number, toRate: number): Float32Array {
-  if (fromRate === toRate) return samples;
-  const ratio = fromRate / toRate;
-  const outLen = Math.floor(samples.length / ratio);
-  const out = new Float32Array(outLen);
-  for (let i = 0; i < outLen; i++) {
-    const pos = i * ratio;
-    const lo = Math.floor(pos);
-    const frac = pos - lo;
-    const a = samples[lo] ?? 0;
-    const b = samples[Math.min(samples.length - 1, lo + 1)] ?? 0;
-    out[i] = a + (b - a) * frac;
-  }
-  return out;
-}
+/** (Moved to src/lib/dsp/resample.ts; re-exported above for compatibility.) */
 
 interface WavHeader {
   view: DataView;
