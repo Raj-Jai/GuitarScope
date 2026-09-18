@@ -124,7 +124,7 @@ export function SongLab() {
   const workerRef = useRef<Worker | null>(null);
   const jobRef = useRef(0);
   const ytPlayerRef = useRef<YTPlayerLike | null>(null);
-  const ytDivRef = useRef<HTMLDivElement | null>(null);
+  const ytWrapRef = useRef<HTMLDivElement | null>(null);
   const playheadRef = useRef<HTMLDivElement | null>(null);
   const clockRef = useRef<{ kind: 'audio' | 'youtube' }>({ kind: 'audio' });
   const analysisRef = useRef<AnalysisData | null>(null);
@@ -351,15 +351,24 @@ export function SongLab() {
       setYtError(err instanceof Error ? err.message : String(err));
       return;
     }
-    if (!ytDivRef.current || !window.YT) return;
+    const wrap = ytWrapRef.current;
+    if (!wrap || !window.YT) return;
     try {
       ytPlayerRef.current?.destroy();
     } catch {
       /* ignore */
     }
+    // The IFrame API REPLACES its target node with an <iframe>. If that
+    // node is React-rendered, the next reconciler pass crashes with
+    // insertBefore/NotFoundError and blanks the page. So the host is
+    // created imperatively inside a React-owned wrapper React never
+    // mutates beyond attributes.
+    wrap.innerHTML = '';
+    const host = document.createElement('div');
+    wrap.appendChild(host);
     clockRef.current = { kind: 'youtube' };
     setPlayer('youtube');
-    ytPlayerRef.current = new window.YT.Player(ytDivRef.current, {
+    ytPlayerRef.current = new window.YT.Player(host, {
       videoId: id,
       playerVars: { rel: 0 },
       events: {
@@ -570,7 +579,7 @@ export function SongLab() {
           <span>{ytError}</span>
         </div>
       )}
-      <div ref={ytDivRef} data-testid="yt-player" className={player === 'youtube' ? '' : 'yt-hidden'} />
+      <div ref={ytWrapRef} data-testid="yt-player" className={player === 'youtube' ? '' : 'yt-hidden'} />
 
       {phase === 'loading' && <div className="tuner-sub">Loading audio…</div>}
       {phase === 'analyzing' && (

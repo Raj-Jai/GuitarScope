@@ -5,6 +5,7 @@ import { ChordPanel } from './components/ChordPanel';
 import { SignalCanvas } from './components/SignalCanvas';
 import { ControlBar } from './components/ControlBar';
 import { SongLab } from './components/SongLab';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 function TunerView() {
   const audio = useGuitarAudio();
@@ -71,7 +72,15 @@ export default function App() {
         </nav>
       </header>
 
-      {tab === 'tuner' ? <TunerView /> : <SongLab />}
+      {tab === 'tuner' ? (
+        <ErrorBoundary label="the tuner">
+          <TunerView />
+        </ErrorBoundary>
+      ) : (
+        <ErrorBoundary label="Song Lab">
+          <SongLab />
+        </ErrorBoundary>
+      )}
 
       <footer className="app-footer">
         <span>Mic → AudioWorklet → DSP Worker → UI · YIN pitch + harmonic-subtraction chords</span>
