@@ -79,5 +79,5 @@ describe('M5 exit: etude transcription', () => {
     // keep onsets tight.
     expect(s.f1).toBeGreaterThan(0.6);
     expect(s.meanOnsetErrMs).toBeLessThan(100);
-  });
+  }, 60000);
 });

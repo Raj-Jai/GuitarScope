@@ -37,6 +37,28 @@ YouTube-video sync (paste a URL; charts follow the video clock).
 
 ![Song Lab tutorial view with synced chords and piano-roll notes](docs/screenshots/songlab.png)
 
+### Analyze a YouTube URL (local companion, opt-in)
+
+The public web app does **not** download YouTube media — a pasted URL
+only embeds the official player for sync. For local experimentation,
+Song Lab offers an explicit *Local analysis* flow backed by a companion
+process on your own machine that invokes your locally installed yt-dlp
+and ffmpeg. Users are responsible for ensuring their use complies with
+YouTube's Terms, applicable copyright/license terms, and local law.
+GuitarScope does not host, redistribute, or commit downloaded media.
+
+```bash
+npm run songlab:server   # localhost only (127.0.0.1:8765), one job at a time
+```
+
+Then paste a single-video URL in Song Lab and click **Analyze**: the UI
+shows connection status, job progress (download → decode → analyze),
+and on completion loads the charts synced to the video. If the helper
+isn't running you'll see exactly how to start it. Guardrails: YouTube
+watch URLs only (no playlists/channels), 10-minute / 250 MB caps,
+fixed yt-dlp argument array (never a shell string), temp files always
+cleaned. Without the helper, audio-file upload works fully offline.
+
 Analysis runs in a browser Worker (no server needed); the same pipeline
 exists as an offline CLI (`npm run analyze -- --input song.wav ...`,
 with a vocal-robust `--branches multi` mode). Details, fixture recipes

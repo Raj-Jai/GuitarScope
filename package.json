@@ -11,7 +11,8 @@
     "test": "vitest run",
     "dev:https": "HTTPS=1 vite --host --port 5199",
     "dev:lan": "HTTPS=1 vite --host --port 5199",
-    "analyze": "tsx analyzer/cli.ts"
+    "analyze": "tsx analyzer/cli.ts",
+    "songlab:server": "tsx songlab-server/server.ts"
   },
   "dependencies": {
     "react": "^19.2.8",

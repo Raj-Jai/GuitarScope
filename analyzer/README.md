@@ -3,7 +3,6 @@
 Analyzes full songs into time-aligned chords + notes (`analysis.json`),
 consumed by the Song Lab tutorial UI. Separate from the real-time tuner
 pipeline by design: songs are processed in batches, not streamed.
-
 ## Quick start
 
 ```bash
@@ -20,6 +19,16 @@ npm run analyze -- --input song48st.wav --output song-multi.json --branches mult
 
 Options: `--top N` (candidates per frame), `--chroma` (embed chroma for
 debugging), `--branches raw|multi`.
+
+## Local companion server (YouTube URLs)
+
+`../songlab-server/server.ts` (`npm run songlab:server`) exposes a
+loopback-only API (`POST /api/analyze {url}`, `GET /api/jobs/:id`,
+`GET /api/health`) that runs the fixed yt-dlp → ffmpeg → analyzer
+pipeline and returns this same JSON schema. Strict single-video URL
+validation, one job at a time, 10-min/250 MB caps, temp cleanup. The
+React UI polls it and falls back to file upload when absent. See the
+main README disclosure on YouTube Terms before using it.
 
 ## YouTube fixtures (local testing only)
 

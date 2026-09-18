@@ -116,6 +116,9 @@ export function SongLab() {
   const [ytError, setYtError] = useState<string | null>(null);
   const [player, setPlayer] = useState<'audio' | 'youtube'>('audio');
   const [audioDur, setAudioDur] = useState(0);
+  const [serverOnline, setServerOnline] = useState<boolean | null>(null);
+  const [jobProgress, setJobProgress] = useState('');
+  const pollRef = useRef<number | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const workerRef = useRef<Worker | null>(null);
@@ -184,11 +187,28 @@ export function SongLab() {
     setPlaying(play);
   }, []);
 
+  const checkServer = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await fetch('http://127.0.0.1:8765/api/health');
+      const ok = res.ok && ((await res.json()) as { ok?: boolean }).ok === true;
+      setServerOnline(ok);
+      return ok;
+    } catch {
+      setServerOnline(false);
+      return false;
+    }
+  }, []);
+
   // rAF: playhead (direct DOM), loop enforcement, event changes -> state.
   useEffect(() => {
     let raf = 0;
     const loop = () => {
       raf = requestAnimationFrame(loop);
+      const ui = uiRef.current;
+      ui.tick++;
+      // Companion health check ~every 10s from the render loop (not an effect).
+      // Runs before the analysis gate so the dot works with no song loaded.
+      if (ui.tick % 600 === 1) void checkServer();
       const a = analysisRef.current;
       if (!a) return;
       let t = getTime();
@@ -203,8 +223,6 @@ export function SongLab() {
       if (playheadRef.current && dur > 0) {
         playheadRef.current.style.left = `${Math.min(100, (t / dur) * 100)}%`;
       }
-      const ui = uiRef.current;
-      ui.tick++;
       // Current chord index.
       let idx = -1;
       for (let i = 0; i < a.chords.length; i++) {
@@ -231,7 +249,7 @@ export function SongLab() {
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [getTime, getDuration, seekTo]);
+  }, [getTime, getDuration, seekTo, checkServer]);
 
 
   const runAnalysis = useCallback(
@@ -325,12 +343,7 @@ export function SongLab() {
     runAnalysis(samples, 48000, 'demo progression (G D Am C)');
   }, [runAnalysis]);
 
-  const loadYouTube = useCallback(async () => {
-    const id = extractVideoId(ytUrl);
-    if (!id) {
-      setYtError('That does not look like a YouTube URL.');
-      return;
-    }
+  const attachPlayer = useCallback(async (id: string) => {
     setYtError(null);
     try {
       await loadYouTubeAPI();
@@ -339,7 +352,11 @@ export function SongLab() {
       return;
     }
     if (!ytDivRef.current || !window.YT) return;
-    ytPlayerRef.current?.destroy();
+    try {
+      ytPlayerRef.current?.destroy();
+    } catch {
+      /* ignore */
+    }
     clockRef.current = { kind: 'youtube' };
     setPlayer('youtube');
     ytPlayerRef.current = new window.YT.Player(ytDivRef.current, {
@@ -349,13 +366,110 @@ export function SongLab() {
         onError: () => setYtError('YouTube player reported an error (video may restrict embedding).'),
       },
     });
-    setSourceLabel(`YouTube ${id} — load an analysis JSON to sync charts`);
-  }, [ytUrl]);
+    setSourceLabel(`YouTube ${id} — charts follow the video`);
+  }, []);
+
+  const loadYouTube = useCallback(async () => {
+    const id = extractVideoId(ytUrl);
+    if (!id) {
+      setYtError('That does not look like a YouTube URL.');
+      return;
+    }
+    await attachPlayer(id);
+  }, [ytUrl, attachPlayer]);
+
+  // Local companion server (opt-in localhost backend for YouTube URLs).
+
+  // Health polling syncs with the external companion process (not render state).
+
+  const analyzeViaServer = useCallback(async () => {
+    const id = extractVideoId(ytUrl);
+    if (!id) {
+      setYtError('Paste a single-video YouTube URL first.');
+      return;
+    }
+    if (!(await checkServer())) return;
+    if (pollRef.current !== null) return; // a job is already being followed
+    setYtError(null);
+    setPhase('analyzing');
+    setError(null);
+    setJobProgress('starting…');
+    try {
+      const started = await fetch('http://127.0.0.1:8765/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: ytUrl }),
+      });
+      if (started.status === 429) {
+        setError('The local analyzer is busy (one job at a time). Try again shortly.');
+        setPhase('empty');
+        setJobProgress('');
+        return;
+      }
+      if (!started.ok) {
+        const e = (await started.json().catch(() => ({}))) as { error?: string };
+        throw new Error(e.error ?? `Server refused (${started.status}).`);
+      }
+      const { jobId } = (await started.json()) as { jobId: string };
+      pollRef.current = window.setInterval(() => {
+        void (async () => {
+          try {
+            const res = await fetch(`http://127.0.0.1:8765/api/jobs/${jobId}`);
+            if (!res.ok) throw new Error(`Job lookup failed (${res.status}).`);
+            const job = (await res.json()) as {
+              status: string;
+              stage?: string;
+              progress?: number;
+              error?: string;
+              videoId?: string;
+              analysis?: SongAnalysis;
+            };
+            if (job.status === 'complete' && job.analysis) {
+              if (pollRef.current !== null) window.clearInterval(pollRef.current);
+              pollRef.current = null;
+              const errs = validateAnalysis(job.analysis);
+              if (errs.length > 0) throw new Error(`Bad analysis: ${errs.join('; ')}`);
+              setAnalysis({
+                chords: job.analysis.chords,
+                notes: job.analysis.notes,
+                duration: job.analysis.source.duration,
+              });
+              setJobProgress('');
+              setPhase('ready');
+              await attachPlayer(job.videoId ?? id);
+            } else if (job.status === 'error') {
+              if (pollRef.current !== null) window.clearInterval(pollRef.current);
+              pollRef.current = null;
+              setJobProgress('');
+              setPhase('empty');
+              setError(
+                `Local analysis failed: ${job.error ?? 'unknown error'} ` +
+                  `Try an authorized/local audio file instead.`,
+              );
+            } else {
+              setJobProgress(`${job.stage ?? 'working'} ${Math.round((job.progress ?? 0) * 100)}%`);
+            }
+          } catch (err) {
+            if (pollRef.current !== null) window.clearInterval(pollRef.current);
+            pollRef.current = null;
+            setJobProgress('');
+            setPhase('empty');
+            setError(`Lost contact with the local analyzer: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        })();
+      }, 800);
+    } catch (err) {
+      setJobProgress('');
+      setPhase('empty');
+      setError(`Could not reach the local analyzer: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [ytUrl, checkServer, attachPlayer]);
 
   useEffect(
     () => () => {
       workerRef.current?.terminate();
       workerRef.current = null;
+      if (pollRef.current !== null) window.clearInterval(pollRef.current);
       try {
         ytPlayerRef.current?.destroy();
       } catch {
@@ -414,16 +528,41 @@ export function SongLab() {
       <div className="controls-row">
         <input
           className="yt-input"
-          placeholder="Paste YouTube URL for video-synced charts"
+          placeholder="Paste YouTube URL to analyze (needs local analyzer)"
           value={ytUrl}
           onChange={(e) => setYtUrl(e.target.value)}
           data-testid="yt-url"
           aria-label="YouTube URL"
         />
-        <button className="btn" onClick={() => void loadYouTube()} data-testid="yt-load">
-          Load video
+        <button className="btn primary" onClick={() => void analyzeViaServer()} data-testid="yt-analyze">
+          Analyze
         </button>
+        <button className="btn" onClick={() => void loadYouTube()} data-testid="yt-load">
+          Just play video
+        </button>
+        <span
+          className={`status-line ${serverOnline ? 'live' : ''}`}
+          data-testid="server-status"
+          title="Local companion server (yt-dlp + ffmpeg + analyzer on your machine)"
+        >
+          {serverOnline === null
+            ? '○ Checking local analyzer…'
+            : serverOnline
+              ? '● Local analyzer connected'
+              : '○ Local analyzer not running'}
+        </span>
       </div>
+      {serverOnline === false && (
+        <div className="tuner-sub" data-testid="server-offline">
+          URL analysis needs the helper on your computer (it runs yt-dlp + ffmpeg locally).
+          Start it with: <code>npm run songlab:server</code> — or use an audio file below instead.
+        </div>
+      )}
+      {jobProgress && (
+        <div className="tuner-sub" data-testid="job-progress">
+          Local analysis… {jobProgress}
+        </div>
+      )}
       {ytError && (
         <div className="error-banner" role="alert" data-testid="yt-error">
           <span>{ytError}</span>
@@ -437,12 +576,11 @@ export function SongLab() {
           Analyzing… {progress}
         </div>
       )}
-      {phase === 'error' && error && (
+      {error && phase !== 'ready' && (
         <div className="error-banner" role="alert" data-testid="song-error">
           <span>{error}</span>
         </div>
       )}
-      {error && phase !== 'error' && <div className="tuner-sub">{error}</div>}
 
       {audioUrl && player === 'audio' && (
         <audio
