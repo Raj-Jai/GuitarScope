@@ -291,7 +291,20 @@ export function createSongLabServer(): Server {
 
 const invokedAsMain = (process.argv[1] ?? '').endsWith('server.ts') || (process.argv[1] ?? '').endsWith('server.js');
 if (invokedAsMain) {
-  createSongLabServer().listen(PORT, HOST, () => {
+  const server = createSongLabServer();
+  server.on('error', (err: unknown) => {
+    const code = (err as { code?: string })?.code;
+    if (code === 'EADDRINUSE') {
+      console.error(
+        `Port ${PORT} on ${HOST} is already in use — a companion server is already running.\n` +
+          `Reuse it (Song Lab will show "connected"), or stop the other instance first:\n` +
+          `  kill $(ps -eo pid,args | grep "[s]onglab-server/server" | awk '{print $1}')`,
+      );
+      process.exit(1);
+    }
+    throw err;
+  });
+  server.listen(PORT, HOST, () => {
     console.log(`Song Lab companion listening on http://${HOST}:${PORT} (localhost only)`);
     console.log('Requires yt-dlp + ffmpeg on PATH. Temp files under os.tmpdir()/guitarscope, always cleaned.');
   });
