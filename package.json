@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "dev:https": "HTTPS=1 vite --host --port 5199",
-    "dev:lan": "HTTPS=1 vite --host --port 5199"
+    "dev:lan": "HTTPS=1 vite --host --port 5199",
+    "analyze": "tsx analyzer/cli.ts"
   },
   "dependencies": {
     "react": "^19.2.8",
@@ -23,6 +24,7 @@
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "oxlint": "^1.81.0",
+    "tsx": "^4.23.13",
     "typescript": "~6.0.2",
     "vite": "^8.3.0",
     "vitest": "^5.0.1"
