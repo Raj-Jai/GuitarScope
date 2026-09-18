@@ -3,12 +3,15 @@
  *
  * Single graph, scheduled on the AudioContext clock:
  *
- *   AudioBufferSource(sched) → gain ─┬→ speakers (what you hear)
- *                                     └→ MediaStreamDestination → MediaStreamSource
- *                                         → AudioWorklet (framing) → DSP Worker
+ *   AudioBufferSource(sched) → split ─┬→ volumeGain → speakers (what you hear)
+ *                                      ├→ MediaStreamDestination → MediaStreamSource
+ *                                      │    → AudioWorklet (framing) → DSP Worker
+ *                                      └→ analyser (visuals match analysis)
  *
+ * The analysis branch is fixed unity gain; only the speaker branch has a
+ * volume control, so turning the volume down can never change detection.
  * The analyzed stream derives from the same scheduled source you hear
- * (post-gain split), so heard audio and DSP input cannot drift apart.
+ * (post-split), so heard audio and DSP input cannot drift apart.
  * Demo buffers are generated at the ACTUAL context rate and the engine
  * is configured from it — never assume 48 kHz.
  */
@@ -56,7 +59,7 @@ export function buildDemoTimeline(durations: number[]): number[] {
 export interface DemoProgramOptions {
   /** Requested context rate (actual rate is honored; default 48000). */
   sampleRate?: number;
-  /** Speaker volume 0..1 (post-split gain is shared, default 0.8). */
+  /** Speaker volume 0..1 (analysis branch stays fixed; default 0.8). */
   volume?: number;
   /** Scheduler lookahead in seconds (default 0.4). */
   lookahead?: number;
@@ -73,6 +76,7 @@ export class DemoProgram {
   private readonly onWorkletFrame?: DemoProgramOptions['onWorkletFrame'];
 
   private gain: GainNode | null = null;
+  private volumeGain: GainNode | null = null;
   private mediaDest: MediaStreamAudioDestinationNode | null = null;
   private worklet: AudioWorkletNode | null = null;
   private analyserNode: AnalyserNode | null = null;
@@ -116,8 +120,11 @@ export class DemoProgram {
     });
 
     this.gain = this.context.createGain();
-    this.gain.gain.value = this.volume;
-    this.gain.connect(this.context.destination);
+    this.gain.gain.value = 1; // fixed unity: analysis must not depend on volume
+    this.volumeGain = this.context.createGain();
+    this.volumeGain.gain.value = this.volume;
+    this.volumeGain.connect(this.context.destination);
+    this.gain.connect(this.volumeGain);
 
     this.mediaDest = this.context.createMediaStreamDestination();
     this.gain.connect(this.mediaDest);
@@ -177,6 +184,15 @@ export class DemoProgram {
     }
   }
 
+  /** Speaker volume 0..1; analysis branch is unaffected. */
+  setVolume(v: number): void {
+    this.volumeGain?.gain.setTargetAtTime(
+      Math.min(1, Math.max(0, v)),
+      this.context.currentTime,
+      0.02,
+    );
+  }
+
   async stop(): Promise<void> {
     // Deterministic teardown: stop scheduling -> silence sources ->
     // disconnect graph -> end tracks -> close context.
@@ -209,6 +225,11 @@ export class DemoProgram {
       /* ignore */
     }
     try {
+      this.volumeGain?.disconnect();
+    } catch {
+      /* ignore */
+    }
+    try {
       this.worklet?.disconnect();
     } catch {
       /* ignore */
@@ -223,6 +244,7 @@ export class DemoProgram {
       }
     }
     this.gain = null;
+    this.volumeGain = null;
     this.mediaDest = null;
     this.worklet = null;
     this.analyserNode = null;

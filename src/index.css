@@ -127,6 +127,11 @@ body {
   padding: 6px 8px;
 }
 
+.cadence input[type='range'] {
+  width: 110px;
+  accent-color: var(--accent2);
+}
+
 .status-line {
   font-size: 13px;
   color: var(--dim);

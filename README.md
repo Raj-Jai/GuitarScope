@@ -61,7 +61,10 @@ Useful scripts:
 4. **Hear the demo** — *Play demo signal* is audible: the same scheduled
    source feeds both your speakers and the analyzer (demo is a virtual
    microphone through the real AudioWorklet → Worker path), so what you
-   hear is exactly what is analyzed.
+   hear is exactly what is analyzed. The volume slider affects speakers
+   only — detection gain is fixed.
+5. **Record evidence** — *Session log* downloads the run as JSON (notes,
+   chords, confidence, timings, queue stats) for reproducible bug reports.
 4. **Chord rate** — switch 2/4/8 Hz analysis cadence live; watch the
    queue/dropped counters stay at zero.
 5. **Uncertainty** — silence shows *No signal*, weak/polyphonic input on the

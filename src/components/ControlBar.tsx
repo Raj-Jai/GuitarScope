@@ -10,19 +10,27 @@ export function ControlBar({
   micError,
   demoMode,
   stats,
+  sessionEvents,
+  demoVolume,
   onStartMic,
   onStartDemo,
   onStop,
   onCadence,
+  onVolume,
+  onDownloadLog,
 }: {
   status: AudioStatus;
   micError: MicError | null;
   demoMode: boolean;
   stats: LiveStats;
+  sessionEvents: number;
+  demoVolume: number;
   onStartMic: () => void;
   onStartDemo: () => void;
   onStop: () => void;
   onCadence: (hz: number) => void;
+  onVolume: (v: number) => void;
+  onDownloadLog: () => void;
 }) {
   const running = status === 'running';
   return (
@@ -43,6 +51,21 @@ export function ControlBar({
             Stop{demoMode ? ' demo' : ''}
           </button>
         )}
+        {running && demoMode && (
+          <label className="cadence">
+            Volume
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(demoVolume * 100)}
+              onChange={(e) => onVolume(Number(e.target.value) / 100)}
+              data-testid="volume-slider"
+              aria-label="Demo speaker volume (analysis gain is fixed)"
+              title="Speaker volume only — detection gain is fixed"
+            />
+          </label>
+        )}
         <label className="cadence">
           Chord rate
           <select
@@ -59,6 +82,14 @@ export function ControlBar({
         {status === 'starting' && <span className="status-line">Requesting microphone…</span>}
         {running && demoMode && <span className="status-line demo">Demo signal (synthetic, real DSP path)</span>}
         {running && !demoMode && <span className="status-line live">Listening via microphone</span>}
+        <button
+          className="btn"
+          onClick={onDownloadLog}
+          data-testid="btn-log"
+          title="Download this session as JSON (notes, chords, confidence, timings)"
+        >
+          Session log{sessionEvents > 0 ? ` (${sessionEvents})` : ''}
+        </button>
       </div>
       {micError && (
         <div className="error-banner" role="alert" data-testid="error-banner">

@@ -12,6 +12,7 @@ import type { ChordResult } from '../lib/analysis/polyphonic';
 import { TunerSmoother } from '../lib/analysis/tuner-smoother';
 import { LabelStabilizer } from '../lib/analysis/temporal-smoothing';
 import { ChordStabilityGate } from '../lib/analysis/chord-stability';
+import { SessionLog } from '../lib/analysis/session-log';
 
 export type AudioStatus =
   | 'idle'
@@ -64,10 +65,14 @@ export function useGuitarAudio(): {
   chordName: string | null;
   stats: LiveStats;
   analyser: AnalyserNode | null;
+  sessionEvents: number;
+  demoVolume: number;
   startMic: () => Promise<void>;
   stop: () => Promise<void>;
   startDemo: () => Promise<void>;
   setChordCadence: (hz: number) => void;
+  setDemoVolume: (v: number) => void;
+  downloadSessionLog: () => void;
 } {
   const [status, setStatus] = useState<AudioStatus>('idle');
   const [micError, setMicError] = useState<MicError | null>(null);
@@ -77,6 +82,8 @@ export function useGuitarAudio(): {
   const [chordName, setChordName] = useState<string | null>(null);
   const [stats, setStats] = useState<LiveStats>(INITIAL_STATS);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
+  const [sessionEvents, setSessionEvents] = useState(0);
+  const [demoVolume, setDemoVolumeState] = useState(0.8);
 
   const workerRef = useRef<Worker | null>(null);
   const micRef = useRef<MicController | null>(null);
@@ -87,6 +94,11 @@ export function useGuitarAudio(): {
   const resultTimesRef = useRef<number[]>([]);
   const readyRef = useRef(false);
   const chordCadenceRef = useRef(CHORD_CADENCE_HZ);
+  const sessionLogRef = useRef(new SessionLog());
+  const sessionStartRef = useRef(0);
+  const lastStatsLogRef = useRef(0);
+  const queueDepthRef = useRef(0);
+  const droppedRef = useRef(0);
   const statusRef = useRef<AudioStatus>('idle');
   useEffect(() => {
     statusRef.current = status;
@@ -106,6 +118,14 @@ export function useGuitarAudio(): {
     );
     setPitch({ ...p, displayCents, stableNote });
 
+    // Session log (bounded ring; stats throttled to ~0.5 Hz).
+    const t = now - sessionStartRef.current;
+    const log = sessionLogRef.current;
+    log.logPitch(
+      { note: p.note, frequency: p.frequency, cents: p.cents, confidence: p.confidence, status: p.status },
+      t,
+    );
+
     // Attack gate (chordHeld): hold the displayed chord, no stabilization input.
     if (msg.ranChord && !msg.chordHeld) {
       const c = msg.chord;
@@ -116,6 +136,10 @@ export function useGuitarAudio(): {
         ),
       );
       setChord(c);
+      log.logChord(
+        { name: detected?.name ?? null, confidence: c?.confidence ?? 0, status: c?.status ?? 'none' },
+        t,
+      );
     }
 
     setStats((s) => ({
@@ -126,9 +150,25 @@ export function useGuitarAudio(): {
       pitchProcessingMs: msg.pitchProcessingMs,
       chordProcessingMs: msg.ranChord ? msg.chordProcessingMs : s.chordProcessingMs,
     }));
+    if (now - lastStatsLogRef.current > 2000) {
+      lastStatsLogRef.current = now;
+      log.logStats(
+        {
+          queueDepth: queueDepthRef.current,
+          droppedFrames: droppedRef.current,
+          pitchMs: msg.pitchProcessingMs,
+          chordMs: msg.ranChord ? msg.chordProcessingMs : null,
+          e2eMs: now - msg.capturePerf,
+        },
+        t,
+      );
+      setSessionEvents(log.length);
+    }
   }, []);
 
   const handleStats = useCallback((msg: WorkerStatsMessage) => {
+    queueDepthRef.current = msg.queueDepth;
+    droppedRef.current = msg.droppedFrames;
     setStats((s) => ({
       ...s,
       queueDepth: msg.queueDepth,
@@ -200,6 +240,10 @@ export function useGuitarAudio(): {
     noteStabRef.current.reset();
     chordGateRef.current.reset();
     resultTimesRef.current = [];
+    sessionLogRef.current.begin();
+    sessionStartRef.current = performance.now();
+    lastStatsLogRef.current = 0;
+    setSessionEvents(0);
     setPitch(null);
     setChord(null);
     setChordName(null);
@@ -250,6 +294,7 @@ export function useGuitarAudio(): {
     try {
       let seq = 0;
       demo = new DemoProgram({
+        volume: demoVolume,
         onWorkletFrame: (frame, capturePerf) => {
           postFrame(frame, capturePerf, seq++);
         },
@@ -278,12 +323,31 @@ export function useGuitarAudio(): {
       setStatus('error');
       await teardownDemo();
     }
-  }, [demoMode, resetDisplay, teardownMic, teardownDemo, ensureWorker, postFrame]);
+  }, [demoMode, demoVolume, resetDisplay, teardownMic, teardownDemo, ensureWorker, postFrame]);
 
   const setChordCadence = useCallback((hz: number) => {
     chordCadenceRef.current = hz;
     workerRef.current?.postMessage({ type: 'set-chord-cadence', hz } satisfies MainToWorkerMessage);
     setStats((s) => ({ ...s, chordCadenceHz: hz }));
+  }, []);
+
+  const setDemoVolume = useCallback((v: number) => {
+    setDemoVolumeState(v);
+    demoRef.current?.setVolume(v);
+  }, []);
+
+  const downloadSessionLog = useCallback(() => {
+    const blob = new Blob([JSON.stringify(sessionLogRef.current.toJSON())], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `guitarscope-session-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 5000);
   }, []);
 
   useEffect(
@@ -305,9 +369,13 @@ export function useGuitarAudio(): {
     chordName,
     stats,
     analyser,
+    sessionEvents,
+    demoVolume,
     startMic,
     stop,
     startDemo,
     setChordCadence,
+    setDemoVolume,
+    downloadSessionLog,
   };
 }

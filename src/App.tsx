@@ -25,10 +25,14 @@ export default function App() {
         micError={audio.micError}
         demoMode={audio.demoMode}
         stats={audio.stats}
+        sessionEvents={audio.sessionEvents}
+        demoVolume={audio.demoVolume}
         onStartMic={() => void audio.startMic()}
-        onStartDemo={audio.startDemo}
+        onStartDemo={() => void audio.startDemo()}
         onStop={() => void audio.stop()}
         onCadence={audio.setChordCadence}
+        onVolume={audio.setDemoVolume}
+        onDownloadLog={audio.downloadSessionLog}
       />
 
       <main className="panels">
