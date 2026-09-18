@@ -420,6 +420,7 @@ export function SongLab() {
               status: string;
               stage?: string;
               progress?: number;
+              detail?: string;
               error?: string;
               videoId?: string;
               analysis?: SongAnalysis;
@@ -447,7 +448,8 @@ export function SongLab() {
                   `Try an authorized/local audio file instead.`,
               );
             } else {
-              setJobProgress(`${job.stage ?? 'working'} ${Math.round((job.progress ?? 0) * 100)}%`);
+              const detail = job.detail ? ` · ${job.detail}` : '';
+              setJobProgress(`${job.stage ?? 'working'} ${Math.round((job.progress ?? 0) * 100)}%${detail}`);
             }
           } catch (err) {
             if (pollRef.current !== null) window.clearInterval(pollRef.current);

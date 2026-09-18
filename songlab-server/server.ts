@@ -42,20 +42,43 @@ const KNOWN_BROWSERS = new Set([
   'vivaldi',
   'whale',
 ]);
+// Optional player-client pin (e.g. YTDLP_PLAYER_CLIENT=visionos). YouTube
+// challenges clients unevenly per network; a working terminal run is the
+// best guide for what to pin. Env-only, allowlisted, never from the UI.
+const PLAYER_CLIENT = (process.env.YTDLP_PLAYER_CLIENT ?? '').trim().toLowerCase();
+const KNOWN_CLIENTS = new Set(['visionos', 'android', 'ios', 'tv', 'web', 'mweb', 'web_embedded']);
 
 /** Fixed yt-dlp argument array (pure, unit-tested). No shell, no user input in flags. */
 export function buildYtDlpArgs(
   url: string,
   outTemplate: string,
   cookiesFrom: string = COOKIES_FROM_BROWSER,
+  playerClient: string = PLAYER_CLIENT,
 ): string[] {
-  const args = ['--no-playlist', '-x', '--audio-format', 'wav', '-o', outTemplate];
+  // --concurrent-fragments: YouTube throttles single-connection DASH
+  // throughput; parallel fragments keep stalled-feeling downloads moving.
+  const args = ['--no-playlist', '-x', '--audio-format', 'wav'];
+  const client = playerClient.trim().toLowerCase();
+  if (client && KNOWN_CLIENTS.has(client)) {
+    args.push('--extractor-args', `youtube:player_client=${client}`);
+  }
+  args.push('--concurrent-fragments', '4', '-o', outTemplate);
   const browser = cookiesFrom.trim().toLowerCase();
   if (browser && KNOWN_BROWSERS.has(browser)) {
     args.push('--cookies-from-browser', browser);
   }
   args.push(url);
   return args;
+}
+
+/** Parse yt-dlp `[download] 12.3% of 4.5MiB at 1.2MiB/s ETA 03:10` lines. */
+export function parseDownloadProgress(line: string): { pct: number; detail: string } | null {
+  const m = /\[download\]\s+(\d+(?:\.\d+)?)%/.exec(line);
+  if (!m) return null;
+  const at = /at\s+(\S+\/s)/.exec(line);
+  const eta = /ETA\s+(\S+)/.exec(line);
+  const detail = [at ? at[1] : null, eta ? `ETA ${eta[1]}` : null].filter(Boolean).join(' ');
+  return { pct: Math.min(0.99, Math.round((Number(m[1]) / 100) * 10000) / 10000), detail };
 }
 
 type Stage = 'queued' | 'downloading' | 'decoding' | 'analyzing' | 'complete' | 'error';
@@ -67,6 +90,8 @@ interface Job {
   status: 'queued' | 'running' | 'complete' | 'error';
   stage: Stage;
   progress: number; // 0..1 within stage-weighted overall
+  /** Human-readable in-stage detail, e.g. download speed/ETA. */
+  detail?: string;
   error?: string;
   analysis?: SongAnalysis;
   startedAt: number;
@@ -118,9 +143,14 @@ function runFile(
   cmd: string,
   args: string[],
   onStdout?: (line: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = execFile(cmd, args, { timeout: JOB_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 }, (err) => {
+    const child = execFile(
+      cmd,
+      args,
+      { timeout: JOB_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, signal },
+      (err) => {
       if (err) {
         // Surface yt-dlp/ffmpeg's own ERROR line, not the full command.
         const text = String((err as Error & { stderr?: unknown }).stderr ?? err.message ?? err);
@@ -174,14 +204,44 @@ async function processJob(job: Job): Promise<void> {
     // 1. Download (fixed argument array — never a shell string).
     job.stage = 'downloading';
     job.progress = 0;
-    await runFile(
-      'yt-dlp',
-      buildYtDlpArgs(job.url, path.join(dir, 'audio.%(ext)s')),
-      (line) => {
-        const m = /\[download\]\s+(\d+(?:\.\d+)?)%/.exec(line);
-        if (m) job.progress = Math.min(0.99, Number(m[1]) / 100);
-      },
-    );
+    // Stall watchdog: throttled fragments can sit at 0% with no output.
+    // Abort after 90s of silence so the job fails visibly instead of
+    // hanging until the 15-minute timeout.
+    const aborter = new AbortController();
+    let lastActivity = Date.now();
+    let stalled = false;
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastActivity > 90000) {
+        stalled = true;
+        aborter.abort();
+      }
+    }, 10000);
+    try {
+      await runFile(
+        'yt-dlp',
+        buildYtDlpArgs(job.url, path.join(dir, 'audio.%(ext)s')),
+        (line) => {
+          lastActivity = Date.now();
+          const parsed = parseDownloadProgress(line);
+          if (parsed) {
+            job.progress = parsed.pct;
+            if (parsed.detail) job.detail = parsed.detail;
+          }
+        },
+        aborter.signal,
+      );
+    } catch (err) {
+      if (stalled) {
+        throw new Error(
+          'Download stalled: no data for 90s. YouTube may be throttling this ' +
+            'connection — retry, try a shorter video, or download the audio yourself ' +
+            'and use Open audio file instead.',
+        );
+      }
+      throw err;
+    } finally {
+      clearInterval(watchdog);
+    }
     const entries = await fs.readdir(dir);
     const wav = entries.find((e) => e.toLowerCase().endsWith('.wav'));
     if (!wav) throw new Error('Download produced no audio file.');
@@ -335,9 +395,19 @@ if (invokedAsMain) {
   });
   server.listen(PORT, HOST, () => {
     console.log(`Song Lab companion listening on http://${HOST}:${PORT} (localhost only)`);
-    console.log('Requires yt-dlp + ffmpeg on PATH. Temp files under os.tmpdir()/guitarscope, always cleaned.');
+    // Tool versions aid support (YouTube breaks extractors regularly).
+    execFile('yt-dlp', ['--version'], (e, out) => {
+      console.log(`yt-dlp ${e ? '(not found!)' : String(out).trim()}`);
+    });
+    execFile('ffmpeg', ['-version'], (e, out) => {
+      console.log(`ffmpeg ${e ? '(not found!)' : String(out).split('\n')[0].replace('ffmpeg version ', '')}`);
+    });
+    console.log('Temp files under os.tmpdir()/guitarscope, always cleaned.');
     if (COOKIES_FROM_BROWSER) {
       console.log(`Cookie mode: extracting YouTube session from ${COOKIES_FROM_BROWSER} (env YTDLP_COOKIES_FROM_BROWSER).`);
+    }
+    if (PLAYER_CLIENT) {
+      console.log(`Player client pinned to ${PLAYER_CLIENT} (env YTDLP_PLAYER_CLIENT).`);
     }
   });
 }

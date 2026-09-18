@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { extractVideoIdStrict } from '../../songlab-server/validate';
-import { buildYtDlpArgs } from '../../songlab-server/server';
+import { buildYtDlpArgs, parseDownloadProgress } from '../../songlab-server/server';
 
 describe('extractVideoIdStrict', () => {
   test('accepts single-video URLs', () => {
@@ -29,7 +29,9 @@ describe('buildYtDlpArgs', () => {
   test('fixed pipeline, URL always last', () => {
     const args = buildYtDlpArgs(url, '/tmp/x/audio.%(ext)s', '');
     expect(args).toEqual([
-      '--no-playlist', '-x', '--audio-format', 'wav', '-o', '/tmp/x/audio.%(ext)s', url,
+      '--no-playlist', '-x', '--audio-format', 'wav',
+      '--concurrent-fragments', '4',
+      '-o', '/tmp/x/audio.%(ext)s', url,
     ]);
   });
   test('known browser adds cookie extraction', () => {
@@ -41,6 +43,30 @@ describe('buildYtDlpArgs', () => {
   test('unknown browser names are ignored (never passed through)', () => {
     const args = buildYtDlpArgs(url, 'o', 'evil; rm -rf /');
     expect(args).not.toContain('--cookies-from-browser');
-    expect(args).toHaveLength(7);
+    expect(args[args.length - 1]).toBe(url);
+  });
+  test('pinned player client is allowlisted', () => {
+    const args = buildYtDlpArgs(url, 'o', '', 'visionos');
+    expect(args).toContain('--extractor-args');
+    expect(args).toContain('youtube:player_client=visionos');
+    expect(args[args.length - 1]).toBe(url);
+    const bad = buildYtDlpArgs(url, 'o', '', 'evil; rm -rf /');
+    expect(bad).not.toContain('--extractor-args');
+  });
+});
+
+describe('parseDownloadProgress', () => {
+  test('percent with speed and ETA', () => {
+    expect(parseDownloadProgress('[download]  12.3% of 4.50MiB at 1.23MiB/s ETA 00:03')).toEqual({
+      pct: 0.123,
+      detail: '1.23MiB/s ETA 00:03',
+    });
+  });
+  test('percent alone', () => {
+    expect(parseDownloadProgress('[download] 100% of 4.50MiB')).toEqual({ pct: 0.99, detail: '' });
+  });
+  test('non-progress lines ignored', () => {
+    expect(parseDownloadProgress('[youtube] Downloading webpage')).toBeNull();
+    expect(parseDownloadProgress('')).toBeNull();
   });
 });
