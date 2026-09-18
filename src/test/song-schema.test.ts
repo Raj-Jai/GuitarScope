@@ -61,6 +61,65 @@ describe('reference parsers', () => {
   });
 });
 
+describe('M0 rhythm/tab layers (v2)', () => {
+  function v2Analysis(): SongAnalysis {
+    const a = sampleAnalysis();
+    a.meta.version = 2;
+    a.tempo = { bpm: 92.4, confidence: 0.91 };
+    a.meter = { numerator: 4, denominator: 4, confidence: 0.72 };
+    a.beats = [
+      { time: 0, index: 0, bar: 0, beatInBar: 0, confidence: 0.9 },
+      { time: 0.65, index: 1, bar: 0, beatInBar: 1, confidence: 0.9 },
+    ];
+    a.strums = [
+      { time: 0, beatIndex: 0, subdivision: 0, slotsPerBeat: 2, direction: 'D', confidence: 0.8, strength: 0.9 },
+      { time: 0.325, beatIndex: 0, subdivision: 1, slotsPerBeat: 2, direction: '?', confidence: 0.4, strength: 0.5 },
+    ];
+    a.patterns = [
+      { start: 0, end: 2.6, meter: '4/4', subdivision: 8, symbols: ['D', '-', 'D', 'U', '-', 'U', 'D', 'U'], confidence: 0.71 },
+    ];
+    a.tab = [
+      {
+        start: 0,
+        end: 0.5,
+        kind: 'chord',
+        notes: [
+          { start: 0, end: 0.5, midi: 45, string: 5, fret: 0, confidence: 0.8, source: 'suggested' },
+        ],
+        alternatives: [
+          { notes: [{ start: 0, end: 0.5, midi: 45, string: 6, fret: 5, confidence: 0.5, source: 'suggested' }], score: 0.5 },
+        ],
+      },
+    ];
+    return a;
+  }
+
+  test('v2 sample validates; v1 consumers unaffected (chords/notes intact)', () => {
+    const a = v2Analysis();
+    expect(validateAnalysis(a)).toEqual([]);
+    expect(a.chords[0].label).toBe('G');
+  });
+
+  test('invalid layers flagged, valid core untouched', () => {
+    const a = v2Analysis();
+    a.beats = [{ time: 1, index: 5, bar: 0, beatInBar: 0, confidence: 1 } as never];
+    a.strums = [{ time: -1, beatIndex: 0, subdivision: 0, direction: 'X', confidence: 0, strength: 0 } as never];
+    a.patterns = [{ start: 2, end: 1, meter: '4/4', subdivision: 8, symbols: ['Z'], confidence: 0 } as never];
+    a.tab = [{ start: 0, end: 1, kind: 'solo', notes: [{ start: 0, end: 1, midi: 200, string: 7, fret: 30, confidence: 0, source: 'recorded' }] } as never];
+    a.tempo = { bpm: -5, confidence: 0 };
+    const errs = validateAnalysis(a);
+    expect(errs.length).toBeGreaterThanOrEqual(5);
+    // Core still fine.
+    expect(a.chords).toHaveLength(2);
+  });
+
+  test('version 3 rejected (unknown contract)', () => {
+    const a = sampleAnalysis();
+    (a.meta as { version: number }).version = 3;
+    expect(validateAnalysis(a).length).toBeGreaterThan(0);
+  });
+});
+
 describe('label parsing', () => {
   test('roots and qualities', () => {
     expect(parseChordLabel('Am')).toMatchObject({ root: 9, quality: 'minor' });
