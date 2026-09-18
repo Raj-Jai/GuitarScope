@@ -1,94 +1,159 @@
-# GuitarScope — real-time browser guitar tuner, note & chord detector
+# GuitarScope — Real-time Guitar Tuner, Note & Chord Detector
 
-Listens to guitar audio through the microphone and identifies notes, tuning,
-strings, and chords — entirely in the browser, no backend.
+A browser app that listens to your guitar through the microphone and tells you
+**what you're playing**: the note, its tuning (±cents), the string, and the
+chord — live, with measured accuracy and latency. No backend, no uploads;
+all audio stays on your device.
 
-## Run it
+![Live demo — A major chord with waveform, spectrum and chord diagram](docs/screenshots/live-demo.png)
+
+## Features
+
+- **Precision tuner** — big note readout, frequency (Hz), smoothed ±cents
+  needle with FLAT/SHARP meter, per-string tuning verdict (IN TUNE / CLOSE /
+  FLAT / SHARP) for standard tuning E2–E4.
+- **Note + string detection** — YIN pitch detection with harmonic (HPS)
+  validation and octave-error guard; honest *"No signal / Low confidence"*
+  states instead of phantom notes.
+- **Chord recognition** — major, minor, 7th, maj7, m7 across all roots
+  (60-chord vocabulary, 132-chord extended set available), with confidence,
+  constituent notes, alternatives, and open-position chord diagrams.
+- **Live diagnostics** — waveform + log spectrum canvases, results/s rate,
+  end-to-end latency, worker timings, queue depth and dropped-frame counters.
+- **Demo mode** — no guitar handy? Plays a synthetic open-string + chord
+  program through the real DSP path.
+- **Phone testing** — HTTPS LAN server included (microphone requires a
+  secure context; see below).
+
+![C major detected with notes, alternatives and diagram](docs/screenshots/chord-detection.png)
+
+## Quick start
+
+Requirements: Node 18+, Chrome/Edge (or any Chromium browser) for the full
+feature set.
 
 ```bash
-cd app
 npm install
-npm run dev      # open the printed localhost URL, allow the microphone
-npm test         # 129 unit/integration tests (DSP + browser layer)
-npm run build    # production build (tsc + vite)
+npm run dev        # open the printed localhost URL, click Start microphone
 ```
 
-No microphone? Click **Play demo signal** — synthetic open strings and chords
-run through the real DSP Worker path.
+Useful scripts:
 
-## Phone / LAN testing (microphone needs HTTPS)
+| Command | What it does |
+|---|---|
+| `npm run dev` | HTTP dev server (desktop mic works on localhost) |
+| `npm run dev:https` / `npm run dev:lan` | HTTPS dev server, LAN-visible — **use this for phone testing** |
+| `npm test` | 155 Vitest unit/integration tests |
+| `npm run build` | Type-check + production build |
+| `npm run lint` | oxlint |
 
-Phone browsers treat `http://<laptop-ip>` as an **insecure context**, so
-`navigator.mediaDevices` is undefined and the app reports
-“Microphone needs HTTPS” instead of starting. Fix:
+## Usage guide
+
+1. **Start** — click *Start microphone* and allow mic access (or *Play demo
+   signal* to watch it work without an instrument).
+2. **Tune** — play an open string. The needle shows cents deviation; green
+   **IN TUNE** appears within ±5¢. The string cell reads e.g. *6th string*;
+   fretted notes honestly show *(nearest)* instead of claiming a string.
+3. **Play chords** — strum and the chord panel shows the name (e.g. *Am*),
+   confidence, notes (*A C E*), close alternatives, and a fretboard diagram
+   for common open shapes. Chord display settles in ~0.3–1 s by design
+   (341 ms analysis window + confirmation), while the tuner stays at ~85 ms.
+4. **Chord rate** — switch 2/4/8 Hz analysis cadence live; watch the
+   queue/dropped counters stay at zero.
+5. **Uncertainty** — silence shows *No signal*, weak/polyphonic input on the
+   tuner shows *Low confidence*, single notes on the chord panel show
+   *Single note — strum a chord*. Nothing is ever invented.
+
+![Mobile layout](docs/screenshots/mobile.png)
+
+## Phone testing (microphone needs HTTPS)
+
+Phone browsers treat `http://<laptop-ip>` as an insecure context, so
+`navigator.mediaDevices` doesn't exist and the app reports
+*“Microphone needs HTTPS”*. Fix:
 
 ```bash
-npm run dev:https   # or: npm run dev:lan  (HTTPS on port 5199, LAN-visible)
+npm run dev:https
 ```
 
-Then open `https://<laptop-ip>:5199` on the phone (the URL is printed on
-server start) and accept the self-signed certificate warning. If the
-certificate warning blocks you, alternatives in order: `mkcert` trusted
-local cert, then an HTTPS tunnel.
+Open the printed `https://<laptop-ip>:5199` on the phone (same Wi-Fi) and
+accept the self-signed certificate warning. If the warning blocks you,
+alternatives in order: a `mkcert` trusted local cert, then an HTTPS tunnel.
 
-## Architecture
+## How it works
 
 ```
-Mic → MediaStream → AudioWorklet (framing only, any block size)
-  → main thread (transfer Float32Array) → DSP Worker → React UI
+Mic → MediaStream → AudioWorklet (4096-sample framing only)
+  → transferable Float32Array → DSP Worker → React UI
 ```
 
-- **AudioWorklet** (`src/worklets/capture-processor.js`): mono mixdown,
-  4096-sample frame assembly, transferable posts. No DSP. The shipped file
-  is tested directly with stubbed worklet globals.
-- **DSP Worker** (`src/workers/dsp-worker.ts`): thin glue around `DspEngine`
-  with a latest-wins queue (capacity 2, drops counted — newer audio wins).
-- **Pitch path**: 4096-sample frames (~85 ms @48 kHz) → YIN primary +
-  HPS harmonic validation/octave guard → note/string/cents/confidence.
-- **Chord path**: continuous 16384-sample ring (~341 ms @48 kHz) →
-  peak-based multi-pitch with harmonic subtraction → chroma → template
-  matching. Cadence configurable (2/4/8 Hz, default 4 Hz).
-- **UI**: tuner needle uses median + EMA smoothed cents with instant reset
-  on note change; note/chord labels use majority-vote stabilization.
-  Waveform/spectrum canvases draw from AnalyserNode (mic) or the demo frame.
+- **Pitch path** — 4096-sample frames → YIN estimator, validated against
+  harmonic structure (HPS-style support scoring, sub-octave correction) →
+  equal-temperament note math (`f = 440·2^((n−69)/12)`, cents =
+  `1200·log2(f/fref)`) → open-string matching → confidence gating.
+- **Chord path** — continuous 16384-sample ring → spectral peaks with
+  parabolic interpolation → iterative harmonic subtraction against a
+  calibrated guitar overtone profile → pitch-class (chroma) vector →
+  cosine template matching → attack-onset hold + 2-confirmation stability
+  gate before display.
+- **Smoothing** — tuner needle: median window + EMA with instant reset on
+  note change (raw value kept for debugging); chord labels: confirmation
+  gate with fast collapse on lost signal.
+- **Backpressure** — bounded latest-wins queue (capacity 2, drops counted);
+  newer audio always beats stale audio.
 
-DSP methodology and the 16384-window rationale: `docs/ADR-001-dsp-architecture.md`.
+Details and design rationale: [`docs/ADR-001-dsp-architecture.md`](docs/ADR-001-dsp-architecture.md).
 
-## Measured results (synthetic guitar-like signals, desktop)
+## Measured results
 
-| Suite | Result |
+Synthetic guitar-like signals (harmonic series + noise), desktop:
+
+| Test | Result |
 |---|---|
-| Mono open strings E2–E4 (clean + noisy + weak-fundamental E2) | 13/13, 0 octave errors |
-| Chords incl. C7/Cmaj7/Cm7/A7/Am7 | 17/17 |
-| Full suite | 129/129, `tsc` clean, build passes |
-| Pitch DSP | ~4–6 ms/frame (4096) |
-| Chord DSP | ~1–3 ms/frame (16384) |
-| Live worker turnaround (headless Chrome) | ~3–6 ms, 12 results/s, queue 0, drops 0 |
-| End-to-end capture→UI (steady state) | ~4–6 ms + 85 ms frame fill |
-| Strum→stable chord display | ~0.3–1.0 s (341 ms window + 4 Hz cadence + label stabilization) |
+| Open strings E2–E4, clean + noisy + weak-fundamental E2 | 13/13, 0 octave errors |
+| Chords incl. C7 / Cmaj7 / Cm7 / A7 / Am7 | 17/17 |
+| Adversarial: ±15–20¢ detune, 50 Hz hum, hard clipping, weak thirds, doubled-note voicings | 8/8 |
+| Full suite (`npm test`) | **155/155**, `tsc` + `oxlint` + `vite build` clean |
+| Pitch DSP (4096 frame) | ~4–6 ms |
+| Chord DSP (16384 window) | ~1–3 ms |
+| Live worker turnaround @ 12 results/s | ~3–6 ms, queue 0, drops 0 |
+| End-to-end capture → UI (steady state) | ~4–6 ms + 85 ms frame fill |
+| Strum → stable chord display | ~0.3–1.0 s |
 
-Browser validation: headless Chrome with file-backed fake microphone —
-all 6 open strings + A/E/C chords detected through the real
-AudioContext→Worklet→Worker→UI path, 0 console errors. Screenshots in milestone logs.
+Browser validation: headless-Chrome runs through real audio plumbing
+(demo path + file-backed fake microphone) — all six open strings and
+A/E/C chords detected, silence gaps correctly empty, zero console errors.
 
-## Manual microphone checklist (real guitar, not yet done here)
+## Project structure
 
-Play each open string (E A D G B E), check note + string + cents needle;
-sustained vs softly-picked notes; muted strings; silence (must show No
-signal, never a phantom note); background noise/speech; major, minor and
-7th chords; fast strumming; rapid note changes. Try 8 Hz chord rate and
-watch queue/dropped counters stay near zero.
+```
+src/
+  lib/dsp/        yin, fft, hps, spectral peaks, multi-pitch, chroma, synth fixtures
+  lib/pitch/      fused pitch pipeline (gate → YIN → octave guard → notes)
+  lib/notes/      frequency ↔ MIDI ↔ note names ↔ cents
+  lib/guitar/     standard tuning, string ID, tuning verdicts
+  lib/chords/     chord dictionary, template matcher
+  lib/analysis/   DspEngine, frame queue, tuner smoother, chord stability gate
+  lib/audio/      mic controller, frame assembler, worker protocol
+  worklets/       self-contained AudioWorklet capture processor (+artifact test)
+  workers/        DSP Worker (protocol glue around DspEngine)
+  components/     TunerPanel, ChordPanel (+diagrams), SignalCanvas, ControlBar
+  hooks/          useGuitarAudio (worker wiring, smoothing, demo program)
+  test/           12 suites — DSP, pipeline, engine, browser-layer, benchmarks
+```
 
 ## Known limitations
 
-- Chord recognition uses template matching on harmonic-subtracted chroma:
-  accurate on triads/7ths in tests, but dense voicings, heavy distortion,
-  and detuned instruments degrade it. No ML model (by design, so far).
-- Chord display latency (~0.3–1 s) is inherent to the 16384 window +
-  stabilization; the tuner path stays at ~85 ms + processing.
-- Brief transition artifacts possible when jumping between items
-  (e.g. a fleeting wrong chord in the first ~300 ms after a change).
-- No on-device mobile test yet (no device attached; `adb` present but
-  empty). Layout is responsive and was checked at 390 px width.
-- Tuner string identification is nearest-open-string based; fretted notes
-  show the closest string, not true fingering.
+- Chord vocabulary is template-based (no ML): triads/7ths are solid in
+  tests; dense voicings, heavy distortion and detuned instruments degrade it.
+- Chord latency (~0.3–1 s) is inherent to the window + confirmation design.
+- Brief transition artifacts are possible in the first ~300 ms after a change.
+- String ID is nearest-open-string based, labeled honestly in the UI.
+- No on-device mobile or real-guitar test yet. Start with the demo program,
+  then play open strings → chords → muted/noisy variants, watching the
+  uncertainty states; the adversarial suite (`src/test/adversarial.test.ts`)
+  guards the baseline against regressions.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
