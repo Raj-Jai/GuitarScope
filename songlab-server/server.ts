@@ -27,7 +27,12 @@ import { assembleTab } from '../analyzer/tab-assign';
 import type { SongAnalysis } from '../analyzer/schema';
 
 const PORT = 8765;
-const HOST = '127.0.0.1';
+// Loopback-only by default. Set SONGLAB_HOST=0.0.0.0 on a TRUSTED home
+// network to let a phone browser reach the helper (the app probes the
+// page hostname then). Never expose this to an untrusted network: it can
+// launch yt-dlp/ffmpeg jobs.
+const HOST = (process.env.SONGLAB_HOST ?? '127.0.0.1').trim() || '127.0.0.1';
+const HOST_IS_LOOPBACK = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1';
 const MAX_DURATION_SEC = 600; // 10 minutes
 const MAX_BYTES = 250 * 1024 * 1024;
 const JOB_TIMEOUT_MS = 15 * 60 * 1000;
@@ -132,11 +137,41 @@ function sendJson(res: ServerResponse, code: number, body: unknown): void {
 
 /** Loopback-only guard: browsers attach Origin; curl/scripts send none. */
 function originAllowed(req: IncomingMessage): boolean {
-  const origin = req.headers.origin;
+  return isAllowedOrigin(
+    req.headers.origin,
+    localHostnames(),
+  );
+}
+
+const _localHostnames = new Set<string>();
+
+/** 127.0.0.1/localhost plus this machine's LAN addresses (for LAN pages). */
+export function localHostnames(): Set<string> {
+  if (_localHostnames.size === 0) {
+    _localHostnames.add('localhost');
+    _localHostnames.add('127.0.0.1');
+    _localHostnames.add('::1');
+    for (const ifaces of Object.values(os.networkInterfaces())) {
+      for (const iface of ifaces ?? []) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          _localHostnames.add(iface.address);
+        }
+      }
+    }
+  }
+  return _localHostnames;
+}
+
+/**
+ * Pure: allow missing Origin (curl/scripts) or an Origin served from this
+ * machine (loopback or its own LAN IPs — the dev page may live there).
+ * Any other website stays blocked.
+ */
+export function isAllowedOrigin(origin: string | undefined, localHosts: Set<string>): boolean {
   if (!origin) return true;
   try {
-    const u = new URL(origin);
-    return u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+    const host = new URL(origin).hostname.toLowerCase();
+    return localHosts.has(host);
   } catch {
     return false;
   }
@@ -453,7 +488,13 @@ if (invokedAsMain) {
     throw err;
   });
   server.listen(PORT, HOST, () => {
-    console.log(`Song Lab companion listening on http://${HOST}:${PORT} (localhost only)`);
+    console.log(`Song Lab companion listening on http://${HOST}:${PORT} (${HOST_IS_LOOPBACK ? 'localhost only' : 'LAN VISIBLE'})`);
+    if (!HOST_IS_LOOPBACK) {
+      console.log(
+        'WARNING: bound beyond loopback. Only do this on a trusted home network — ' +
+          'this endpoint can launch yt-dlp/ffmpeg jobs. Prefer the default 127.0.0.1.',
+      );
+    }
     // Tool versions aid support (YouTube breaks extractors regularly).
     execFile('yt-dlp', ['--version'], (e, out) => {
       console.log(`yt-dlp ${e ? '(not found!)' : String(out).trim()}`);

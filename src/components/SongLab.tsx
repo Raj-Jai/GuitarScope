@@ -6,6 +6,7 @@ import { encodeWavBlob } from '../lib/audio/wav-encode';
 import { fingeringFor } from '../lib/chords/fingerings';
 import { transposeChordLabel, transposeNoteName } from '../lib/chords/transpose';
 import { extractVideoId } from '../lib/song/youtube';
+import { candidateBases, companionReachableNote } from '../lib/song/companion';
 import { ChordDiagram } from './ChordDiagram';
 import { RollingTab } from './RollingTab';
 
@@ -187,16 +188,26 @@ export function SongLab() {
     setPlaying(play);
   }, []);
 
+  const companionBaseRef = useRef('http://127.0.0.1:8765');
+
   const checkServer = useCallback(async (): Promise<boolean> => {
-    try {
-      const res = await fetch('http://127.0.0.1:8765/api/health');
-      const ok = res.ok && ((await res.json()) as { ok?: boolean }).ok === true;
-      setServerOnline(ok);
-      return ok;
-    } catch {
-      setServerOnline(false);
-      return false;
+    for (const base of candidateBases(window.location.hostname)) {
+      try {
+        const ctrl = new AbortController();
+        const timer = window.setTimeout(() => ctrl.abort(), 4000);
+        const res = await fetch(`${base}/api/health`, { signal: ctrl.signal });
+        window.clearTimeout(timer);
+        if (res.ok && ((await res.json()) as { ok?: boolean }).ok === true) {
+          companionBaseRef.current = base;
+          setServerOnline(true);
+          return true;
+        }
+      } catch {
+        /* try next candidate */
+      }
     }
+    setServerOnline(false);
+    return false;
   }, []);
 
   // rAF: playhead (direct DOM), loop enforcement, event changes -> state.
@@ -446,7 +457,7 @@ export function SongLab() {
     setError(null);
     setJobProgress('starting…');
     try {
-      const started = await fetch('http://127.0.0.1:8765/api/analyze', {
+      const started = await fetch(`${companionBaseRef.current}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: ytUrl }),
@@ -465,7 +476,7 @@ export function SongLab() {
       pollRef.current = window.setInterval(() => {
         void (async () => {
           try {
-            const res = await fetch(`http://127.0.0.1:8765/api/jobs/${jobId}`);
+            const res = await fetch(`${companionBaseRef.current}/api/jobs/${jobId}`);
             if (!res.ok) throw new Error(`Job lookup failed (${res.status}).`);
             const job = (await res.json()) as {
               status: string;
@@ -495,7 +506,7 @@ export function SongLab() {
               // video embed is blocked; the player falls back to it.
               if (job.hasAudio) {
                 try {
-                  const audioRes = await fetch(`http://127.0.0.1:8765/api/jobs/${jobId}/audio`);
+                  const audioRes = await fetch(`${companionBaseRef.current}/api/jobs/${jobId}/audio`);
                   if (audioRes.ok) {
                     const blob = await audioRes.blob();
                     setAudio(URL.createObjectURL(blob));
@@ -625,6 +636,11 @@ export function SongLab() {
         <div className="tuner-sub" data-testid="server-offline">
           URL analysis needs the helper on your computer (it runs yt-dlp + ffmpeg locally).
           Start it with: <code>npm run songlab:server</code> — or use an audio file below instead.
+          {companionReachableNote(window.location.hostname, window.isSecureContext) && (
+            <>
+              {' '}Note: {companionReachableNote(window.location.hostname, window.isSecureContext)}
+            </>
+          )}
         </div>
       )}
       {jobProgress && (

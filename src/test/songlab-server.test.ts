@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { extractVideoIdStrict } from '../../songlab-server/validate';
-import { buildYtDlpArgs, parseDownloadProgress, selectEvictions } from '../../songlab-server/server';
+import { buildYtDlpArgs, isAllowedOrigin, parseDownloadProgress, selectEvictions } from '../../songlab-server/server';
+import { candidateBases, companionReachableNote } from '../lib/song/companion';
 
 describe('extractVideoIdStrict', () => {
   test('accepts single-video URLs', () => {
@@ -75,5 +76,48 @@ describe('selectEvictions', () => {
   test('keeps newest N, evicts oldest first', () => {
     expect(selectEvictions(['a', 'b', 'c'], 5)).toEqual([]);
     expect(selectEvictions(['a', 'b', 'c', 'd', 'e', 'f', 'g'], 5)).toEqual(['a', 'b']);
+  });
+});
+
+describe('isAllowedOrigin', () => {
+  const local = new Set(['localhost', '127.0.0.1', '::1', '10.105.24.22']);
+  test('no origin (curl/scripts) allowed', () => {
+    expect(isAllowedOrigin(undefined, local)).toBe(true);
+  });
+  test('pages served from this machine allowed (loopback + own LAN IP)', () => {
+    expect(isAllowedOrigin('http://localhost:5199', local)).toBe(true);
+    expect(isAllowedOrigin('http://127.0.0.1:5199', local)).toBe(true);
+    expect(isAllowedOrigin('https://10.105.24.22:5200', local)).toBe(true);
+  });
+  test('foreign websites blocked', () => {
+    expect(isAllowedOrigin('https://evil.com', local)).toBe(false);
+    expect(isAllowedOrigin('http://10.9.9.9:5199', local)).toBe(false);
+    expect(isAllowedOrigin('not a url', local)).toBe(false);
+  });
+});
+
+describe('candidateBases', () => {
+  test('loopback page -> loopback only', () => {
+    expect(candidateBases('localhost')).toEqual(['http://127.0.0.1:8765']);
+    expect(candidateBases('127.0.0.1')).toEqual(['http://127.0.0.1:8765']);
+    expect(candidateBases('')).toEqual(['http://127.0.0.1:8765']);
+  });
+  test('LAN page -> loopback first, then page host (phone fix)', () => {
+    expect(candidateBases('10.105.24.22')).toEqual([
+      'http://127.0.0.1:8765',
+      'http://10.105.24.22:8765',
+    ]);
+  });
+});
+
+describe('companionReachableNote', () => {
+  test('loopback needs no note', () => {
+    expect(companionReachableNote('localhost', true)).toBeNull();
+  });
+  test('plain-HTTP LAN page is fine', () => {
+    expect(companionReachableNote('10.0.0.5', false)).toBeNull();
+  });
+  test('HTTPS LAN page warns about mixed content', () => {
+    expect(companionReachableNote('10.0.0.5', true)).toMatch(/HTTPS/);
   });
 });
