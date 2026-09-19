@@ -15,6 +15,8 @@ import { analyzeWithBranches } from './branches';
 import { decodeChords } from './decode';
 import { transcribeNotes } from './notes';
 import { analyzeRhythm } from './rhythm';
+import { detectStrums } from './strums';
+import { directionEvidence } from './strum-direction';
 import { validateAnalysis, type SongAnalysis } from './schema';
 
 function argVal(args: string[], ...names: string[]): string | undefined {
@@ -72,6 +74,19 @@ function main(): void {
   console.log(
     `  rhythm: ${rhythm.tempo ? `${rhythm.tempo.bpm} BPM (conf ${rhythm.tempo.confidence})` : 'no tempo'} + ${rhythm.beats.length} beats in ${((performance.now() - t2) / 1000).toFixed(1)}s`,
   );
+  const t3 = performance.now();
+  const rawStrums = detectStrums(mono, sampleRate);
+  // Confidence stays onset-based (timing); '?' direction carries the
+  // direction uncertainty (schema: confidence = timestamp confidence).
+  // Weak onsets skip direction entirely: no evidence to judge by.
+  const strums = rawStrums.map((s) => ({
+    ...s,
+    direction: s.strength < 0.15 ? ('?' as const) : directionEvidence(mono, sampleRate, s.time).direction,
+  }));
+  const dirCount = (d: string): number => strums.filter((s) => s.direction === d).length;
+  console.log(
+    `  strums: ${strums.length} (D=${dirCount('D')} U=${dirCount('U')} ?=${dirCount('?')}) in ${((performance.now() - t3) / 1000).toFixed(1)}s`,
+  );
   const analysis: SongAnalysis = {
     source: { type: 'file', fileName: input.split('/').pop() ?? input, duration: audioSeconds },
     meta: {
@@ -89,6 +104,7 @@ function main(): void {
     tempo: rhythm.tempo ?? undefined,
     meter: rhythm.meter,
     beats: rhythm.beats,
+    strums,
   };
   const errors = validateAnalysis(analysis);
   if (errors.length > 0) {
