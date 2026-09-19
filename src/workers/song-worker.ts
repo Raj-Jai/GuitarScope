@@ -4,13 +4,25 @@
  * --branches multi for deep vocal-robust analysis).
  * Protocol: {type:'analyze', jobId, samples (transferred), sampleRate}
  *   -> {type:'progress', jobId, stage, done, total}
- *   -> {type:'done', jobId, chords, notes, duration}
+ *   -> {type:'done', jobId, chords, notes, tab, strums, tempo, beats, duration}
  *   -> {type:'error', jobId, message}
  */
 import { analyzeFrames } from '../../analyzer/frames';
 import { decodeChords } from '../../analyzer/decode';
 import { transcribeNotes } from '../../analyzer/notes';
-import type { ChordEvent, NoteEvent, NoteGroup } from '../../analyzer/schema';
+import { analyzeRhythm } from '../../analyzer/rhythm';
+import { detectStrums } from '../../analyzer/strums';
+import { directionEvidence } from '../../analyzer/strum-direction';
+import { assembleTab } from '../../analyzer/tab-assign';
+import type {
+  BeatEvent,
+  ChordEvent,
+  NoteEvent,
+  NoteGroup,
+  StrumEvent,
+  TabEvent,
+  TempoInfo,
+} from '../../analyzer/schema';
 
 interface AnalyzeMessage {
   type: 'analyze';
@@ -40,7 +52,18 @@ onmessage = (event: MessageEvent<AnalyzeMessage>) => {
     post({ type: 'progress', jobId, stage: 'notes', done: 0, total: 1 });
     const notes: (NoteEvent | NoteGroup)[] = transcribeNotes(samples, { sampleRate });
     post({ type: 'progress', jobId, stage: 'notes', done: 1, total: 1 });
-    post({ type: 'done', jobId, chords, notes, duration: samples.length / sampleRate });
+    post({ type: 'progress', jobId, stage: 'rhythm', done: 0, total: 1 });
+    const rhythm = analyzeRhythm(samples, sampleRate);
+    const rawStrums = detectStrums(samples, sampleRate);
+    const strums: StrumEvent[] = rawStrums.map((s) => ({
+      ...s,
+      direction: s.strength < 0.15 ? ('?' as const) : directionEvidence(samples, sampleRate, s.time).direction,
+    }));
+    const tempo: TempoInfo | null = rhythm.tempo;
+    const beats: BeatEvent[] = rhythm.beats;
+    const tab: TabEvent[] = assembleTab(chords, notes);
+    post({ type: 'progress', jobId, stage: 'rhythm', done: 1, total: 1 });
+    post({ type: 'done', jobId, chords, notes, tab, strums, tempo, beats, duration: samples.length / sampleRate });
   } catch (err) {
     post({ type: 'error', jobId, message: err instanceof Error ? err.message : String(err) });
   }

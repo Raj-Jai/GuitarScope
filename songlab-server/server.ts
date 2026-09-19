@@ -20,6 +20,10 @@ import { loadWavStereo } from '../analyzer/wav';
 import { analyzeWithBranches } from '../analyzer/branches';
 import { decodeChords } from '../analyzer/decode';
 import { transcribeNotes } from '../analyzer/notes';
+import { analyzeRhythm } from '../analyzer/rhythm';
+import { detectStrums } from '../analyzer/strums';
+import { directionEvidence } from '../analyzer/strum-direction';
+import { assembleTab } from '../analyzer/tab-assign';
 import type { SongAnalysis } from '../analyzer/schema';
 
 const PORT = 8765;
@@ -286,10 +290,17 @@ async function processJob(job: Job): Promise<void> {
     const chords = decodeChords(agreed, {}, 4096 / 48000);
     job.progress = 0.85;
     const notes = transcribeNotes(stereo.mono, { sampleRate: 48000 });
+    const rhythm = analyzeRhythm(stereo.mono, 48000);
+    const strums = detectStrums(stereo.mono, 48000).map((s) => ({
+      ...s,
+      direction:
+        s.strength < 0.15 ? ('?' as const) : directionEvidence(stereo.mono, 48000, s.time).direction,
+    }));
+    const tab = assembleTab(chords, notes);
     job.analysis = {
       source: { type: 'youtube', videoId: job.videoId, duration },
       meta: {
-        version: 1,
+        version: 2,
         sampleRate: 48000,
         windowSize: 16384,
         hopSize: 4096,
@@ -300,6 +311,11 @@ async function processJob(job: Job): Promise<void> {
       frames: [],
       chords,
       notes,
+      tempo: rhythm.tempo ?? undefined,
+      meter: rhythm.meter,
+      beats: rhythm.beats,
+      strums,
+      tab,
     };
     job.status = 'complete';
     job.stage = 'complete';

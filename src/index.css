@@ -569,3 +569,90 @@ body {
   font-family: var(--mono);
   font-size: 16px;
 }
+
+/* ---- Rolling tab ---- */
+
+.tabwrap {
+  margin-top: 12px;
+}
+
+.tab-caption {
+  margin-bottom: 6px;
+}
+
+.tabview {
+  position: relative;
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  height: 190px;
+}
+
+.tabstrip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  will-change: transform;
+}
+
+.tablane {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 26px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabstring {
+  position: sticky;
+  left: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  line-height: 26px;
+}
+
+.tabfret {
+  position: absolute;
+  transform: translate(-50%, 2px);
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--bg2);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+
+.tabview.compact .tabfret {
+  font-size: 11px;
+  padding: 0 3px;
+}
+
+.tabdur {
+  position: absolute;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0.5;
+}
+
+.tabarrow {
+  position: absolute;
+  transform: translate(-50%, -22px);
+  font-size: 15px;
+  color: var(--accent2);
+}
+
+.tabplayhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}

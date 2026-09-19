@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'vitest';
 import {
+  assembleTab,
   assignSequence,
   candidatesFor,
   chordsToTab,
   notesToTab,
+  pcsInSpan,
 } from '../../analyzer/tab-assign';
 import type { ChordEvent } from '../../analyzer/schema';
 
@@ -128,5 +130,40 @@ describe('separated assignment metrics', () => {
     expect(sOk / truth.length).toBe(1); // string accuracy
     expect(fOk / truth.length).toBe(1); // fret accuracy
     expect(exact / truth.length).toBe(1); // exact s+f accuracy
+  });
+});
+
+describe('assembleTab', () => {
+  const am: ChordEvent = {
+    start: 0, end: 2, label: 'Am', root: 'A', quality: 'min', confidence: 0.8, alternatives: [],
+  };
+  test('strummed chord covered by shape: note groups deduped, shape kept', () => {
+    const notes = [
+      { onset: 0.1, offset: 0.6, duration: 0.5, midi: 45, note: 'A2', frequency: 110, confidence: 0.9, source: 'yin' as const },
+      { onset: 0.1, offset: 0.6, duration: 0.5, midi: 52, note: 'E3', frequency: 164.8, confidence: 0.9, source: 'yin' as const },
+    ];
+    const tab = assembleTab([am], notes);
+    // Shape event covers both pitches -> group events dropped, one chord event.
+    expect(tab).toHaveLength(1);
+    expect(tab[0].kind).toBe('chord');
+    expect(tab[0].notes.map((n) => n.midi).sort((a, b) => a - b)).toEqual([40, 45, 52, 57, 60, 64].filter((m) => [45, 52, 57, 60, 64].includes(m)));
+  });
+
+  test('melody outside any shape survives alongside', () => {
+    const notes = [
+      { onset: 0.1, offset: 0.4, duration: 0.3, midi: 45, note: 'A2', frequency: 110, confidence: 0.9, source: 'yin' as const },
+      { onset: 1.0, offset: 1.3, duration: 0.3, midi: 67, note: 'G4', frequency: 392, confidence: 0.9, source: 'yin' as const },
+    ];
+    const tab = assembleTab([am], notes);
+    // G4 (pc 7) is not in Am's shape PCs -> its group survives.
+    expect(tab.some((t) => t.notes.some((n) => n.midi === 67))).toBe(true);
+  });
+
+  test('pcsInSpan collects pitch classes in window', () => {
+    const notes = [
+      { onset: 0.1, offset: 0.4, duration: 0.3, midi: 45, note: 'A2', frequency: 110, confidence: 0.9, source: 'yin' as const },
+    ];
+    expect(pcsInSpan(notes, 0, 1)).toEqual([9]);
+    expect(pcsInSpan(notes, 5, 6)).toEqual([]);
   });
 });

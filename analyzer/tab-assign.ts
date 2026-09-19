@@ -205,7 +205,6 @@ export function notesToTab(
 
 /**
  * Chord-event fingerings from the shape library — emitted ONLY when every
- * detected pitch class in the span belongs to the shape (pitch-consistent).
  * Otherwise an honest gap (no invention, no pitch overwrite).
  */
 export function chordsToTab(
@@ -239,4 +238,62 @@ export function chordsToTab(
     });
   }
   return out;
+}
+
+/** Pitch classes detected by note events overlapping a time span. */
+export function pcsInSpan(
+  notes: (NoteEvent | NoteGroup)[],
+  start: number,
+  end: number,
+): number[] {
+  const pcs = new Set<number>();
+  for (const n of notes) {
+    const onset = n.onset;
+    const offset = isNoteGroup(n) ? n.offset : n.offset;
+    if (offset < start || onset > end) continue;
+    const midis = isNoteGroup(n) ? n.notes.map((x) => x.midi) : [(n as NoteEvent).midi];
+    for (const m of midis) pcs.add(((m % 12) + 12) % 12);
+  }
+  return [...pcs];
+}
+
+/**
+ * Shared final assembly (CLI and browser worker MUST agree).
+ * 1. Note-driven tab from transcribed notes + chord context.
+ * 2. Shape tab from chord events, pitch-consistent.
+ * 3. Dedup: drop note-tab groups fully covered (time + pitch classes)
+ *    by a shape-tab event (avoids double-rendering strummed chords).
+ * Sorted by start time.
+ */
+export function assembleTab(
+  chords: ChordEvent[],
+  notes: (NoteEvent | NoteGroup)[],
+): TabEvent[] {
+  const chordAt = (t: number): string => {
+    for (const c of chords) if (t >= c.start && t < c.end) return c.label;
+    return 'NO_CHORD';
+  };
+  const noteTab = notesToTab(notes, chordAt);
+  const shapeTab = chordsToTab(chords, (t) => pcsInSpan(notes, t - 0.5, t + 0.5));
+  const shapeSpans = shapeTab.map((s) => ({
+    start: s.start,
+    end: s.end,
+    pcs: new Set(s.notes.map((n) => ((n.midi % 12) + 12) % 12)),
+  }));
+  const kept = noteTab.filter((g) => {
+    const groupPCs = new Set(
+      g.notes.map((n) => ((n.midi % 12) + 12) % 12),
+    );
+    for (const s of shapeSpans) {
+      const overlap = Math.min(g.end, s.end) - Math.max(g.start, s.start);
+      const dur = Math.max(1e-6, g.end - g.start);
+      if (overlap / dur >= 0.8 && [...groupPCs].every((pc) => s.pcs.has(pc))) {
+        return false; // covered by a shape event
+      }
+    }
+    return true;
+  });
+  const all = [...shapeTab, ...kept];
+  all.sort((a, b) => a.start - b.start);
+  return all;
 }

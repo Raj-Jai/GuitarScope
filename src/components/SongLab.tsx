@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { ChordEvent, NoteEvent, NoteGroup, SongAnalysis } from '../../analyzer/schema';
+import type { ChordEvent, NoteEvent, NoteGroup, SongAnalysis, StrumEvent, TabEvent } from '../../analyzer/schema';
 import { isNoteGroup, validateAnalysis } from '../../analyzer/schema';
 import { chordTone } from '../lib/dsp/synth';
 import { encodeWavBlob } from '../lib/audio/wav-encode';
@@ -7,14 +7,13 @@ import { fingeringFor } from '../lib/chords/fingerings';
 import { transposeChordLabel, transposeNoteName } from '../lib/chords/transpose';
 import { extractVideoId } from '../lib/song/youtube';
 import { ChordDiagram } from './ChordDiagram';
-
-// Local analysis event types (mirror schema to keep UI decoupled).
-type SongChord = ChordEvent;
-type SongNote = NoteEvent | NoteGroup;
+import { RollingTab } from './RollingTab';
 
 interface AnalysisData {
-  chords: SongChord[];
-  notes: SongNote[];
+  chords: ChordEvent[];
+  notes: (NoteEvent | NoteGroup)[];
+  tab: TabEvent[];
+  strums: StrumEvent[];
   duration: number;
 }
 
@@ -78,7 +77,7 @@ function demoSongSamples(): Float32Array {
   return total;
 }
 
-function soundingNotes(notes: SongNote[], t: number, transpose: number): { label: string; key: string }[] {
+function soundingNotes(notes: (NoteEvent | NoteGroup)[], t: number, transpose: number): { label: string; key: string }[] {
   const out: { label: string; key: string }[] = [];
   for (const n of notes) {
     if (isNoteGroup(n)) {
@@ -112,6 +111,7 @@ export function SongLab() {
   const [loopB, setLoopB] = useState<number | null>(null);
   const [showChords, setShowChords] = useState(true);
   const [showNotes, setShowNotes] = useState(true);
+  const [showTab, setShowTab] = useState(true);
   const [ytUrl, setYtUrl] = useState('');
   const [ytError, setYtError] = useState<string | null>(null);
   const [player, setPlayer] = useState<'audio' | 'youtube'>('audio');
@@ -272,8 +272,20 @@ export function SongLab() {
           const p = msg as unknown as { stage: string; done: number; total: number };
           setProgress(`${p.stage} ${p.done}/${p.total}`);
         } else if (msg.type === 'done') {
-          const d = msg as unknown as { chords: AnalysisData['chords']; notes: AnalysisData['notes']; duration: number };
-          setAnalysis({ chords: d.chords, notes: d.notes, duration: d.duration });
+          const d = msg as unknown as {
+            chords: AnalysisData['chords'];
+            notes: AnalysisData['notes'];
+            tab?: AnalysisData['tab'];
+            strums?: AnalysisData['strums'];
+            duration: number;
+          };
+          setAnalysis({
+            chords: d.chords,
+            notes: d.notes,
+            tab: d.tab ?? [],
+            strums: d.strums ?? [],
+            duration: d.duration,
+          });
           setPhase('ready');
           setProgress('');
           worker.removeEventListener('message', onMessage);
@@ -334,7 +346,13 @@ export function SongLab() {
       if (Math.abs(dur - parsed.source.duration) > 2) {
         setError(`Warning: analysis duration (${parsed.source.duration.toFixed(1)}s) differs from audio (${dur.toFixed(1)}s).`);
       }
-      setAnalysis({ chords: parsed.chords, notes: parsed.notes, duration: parsed.source.duration });
+      setAnalysis({
+        chords: parsed.chords,
+        notes: parsed.notes,
+        tab: parsed.tab ?? [],
+        strums: parsed.strums ?? [],
+        duration: parsed.source.duration,
+      });
       setPhase('ready');
     } catch (err) {
       setError(`Bad analysis file: ${err instanceof Error ? err.message : String(err)}`);
@@ -466,6 +484,8 @@ export function SongLab() {
               setAnalysis({
                 chords: job.analysis.chords,
                 notes: job.analysis.notes,
+                tab: job.analysis.tab ?? [],
+                strums: job.analysis.strums ?? [],
                 duration: job.analysis.source.duration,
               });
               setJobProgress('');
@@ -730,6 +750,10 @@ export function SongLab() {
               <input type="checkbox" checked={showNotes} onChange={(e) => setShowNotes(e.target.checked)} data-testid="toggle-notes" />
               Notes
             </label>
+            <label className="chk">
+              <input type="checkbox" checked={showTab} onChange={(e) => setShowTab(e.target.checked)} data-testid="toggle-tab" />
+              Tab
+            </label>
           </div>
 
           {showChords && (
@@ -745,12 +769,10 @@ export function SongLab() {
                   {next && next.label !== 'NO_CHORD' ? transposeChordLabel(next.label, transpose) : ''}
                 </div>
               </div>
-              {shownCur && fingeringFor(shownCur.replace(/^[A-G][#b]?/, (m) => m)) && (
-                <ChordDiagram
-                  name={shownCur}
-                  frets={fingeringFor(cur?.label ?? '') as number[]}
-                />
-              )}
+              {(() => {
+                const shape = shownCur ? fingeringFor(shownCur) : null;
+                return shape ? <ChordDiagram name={shownCur as string} frets={shape} /> : null;
+              })()}
               <div className="chord-strip" data-testid="chord-strip">
                 {a.chords.map((c, i) => (
                   <div
@@ -774,6 +796,15 @@ export function SongLab() {
                 {sounding.length > 0 ? sounding.map((s) => s.label).join(' ') : '—'}
               </div>
             </div>
+          )}
+
+          {showTab && (
+            <RollingTab
+              tab={a.tab}
+              strums={a.strums}
+              duration={dur}
+              getTime={getTime}
+            />
           )}
         </>
       )}
