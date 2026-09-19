@@ -19,7 +19,14 @@ export interface QuantizedStrum {
   slot: number; // 0..7 eighth slots within the bar
   direction: 'D' | 'U';
   confidence: number;
+  /** True when direction came from hand-grid parity, not acoustic evidence. */
+  inferred: boolean;
+  /** Session-normalized onset strength (weak residue never emits symbols). */
+  strength: number;
 }
+
+/** Minimum strength for a quantized strum to EMIT a pattern symbol. */
+export const SYMBOL_MIN_STRENGTH = 0.15;
 
 export interface PatternExtraction {
   patterns: RhythmPattern[];
@@ -68,7 +75,7 @@ export function quantizeStrums(
   const starts = barStarts(beats);
   const songEnd = beats[beats.length - 1].time + beatDur;
   for (const s of strums) {
-    if (s.direction !== 'D' && s.direction !== 'U') continue; // '?' never quantizes
+    if (s.direction !== 'D' && s.direction !== 'U' && s.direction !== '?') continue;
     // Containing bar.
     let bar = -1;
     for (let b = 0; b < starts.length; b++) {
@@ -92,9 +99,21 @@ export function quantizeStrums(
       time: s.time,
       bar,
       slot,
-      direction: s.direction,
+      direction: s.direction === '?' ? 'D' : s.direction, // placeholder, fixed below
       confidence: s.confidence,
+      inferred: s.direction === '?',
+      strength: s.strength,
     });
+  }
+  // Hand-grid parity fill: the picking hand alternates D/U every eighth
+  // slot regardless of rests, so a SOUNDING '?' strum on an even slot is
+  // most likely D, on an odd slot most likely U — at modest confidence.
+  // This is interpretation (flagged), not acoustic evidence. Syncopated
+  // anticipations can defeat it; the library edit-distance absorbs misses.
+  for (const q of quantized) {
+    if (!q.inferred) continue;
+    q.direction = q.slot % 2 === 0 ? 'D' : 'U';
+    q.confidence = Math.min(q.confidence, 0.5);
   }
   return { quantized, unquantized, eighth };
 }
@@ -152,9 +171,11 @@ export function extractPatterns(
     if (last && last.label === label) last.bar1 = b;
     else segs.push({ bar0: b, bar1: b, label });
   }
-  // Bar signatures from quantized strums.
+  // Bar signatures from SALIENT quantized strums (weak residue such as
+  // note-end transients never emits symbols, even when placed on a slot).
   const barSig = new Map<number, Map<number, QuantizedStrum>>();
   for (const q of quantized) {
+    if (q.strength < SYMBOL_MIN_STRENGTH) continue;
     if (!barSig.has(q.bar)) barSig.set(q.bar, new Map());
     const m = barSig.get(q.bar) as Map<number, QuantizedStrum>;
     const prev = m.get(q.slot);
@@ -212,12 +233,16 @@ export function extractPatterns(
       ) / 100,
     });
   }
+  // Grid certainty over SALIENT strums only: weak residue correctly
+  // rejected from slots must not read as grid uncertainty.
+  const salient = (list: { strength?: number }[]): number =>
+    list.filter((s) => (s.strength ?? 1) >= SYMBOL_MIN_STRENGTH).length;
+  const salientPlaced = quantized.filter((q) => q.strength >= SYMBOL_MIN_STRENGTH).length;
+  const salientTotal = salient(strums);
   return {
     patterns,
     quantized,
     unquantized,
-    slotAccuracyBasis: quantized.length + unquantized.length > 0
-      ? quantized.length / (quantized.length + unquantized.length)
-      : 0,
+    slotAccuracyBasis: salientTotal > 0 ? salientPlaced / salientTotal : 0,
   };
 }

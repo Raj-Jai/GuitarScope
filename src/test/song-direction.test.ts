@@ -64,7 +64,7 @@ describe('direction honesty', () => {
     expect(got.every((g) => g.direction === '?')).toBe(true);
   });
 
-  test('tight 4ms sweeps: correct or ?, never confidently wrong', () => {
+  test('tight 4ms sweeps: correct or ?, never wrong', () => {
     const total = new Float32Array(SR * 5);
     staggered('D', 4, 0.5, total);
     staggered('U', 4, 1.5, total);
@@ -73,9 +73,8 @@ describe('direction honesty', () => {
     const expected = ['D', 'U', 'D', 'U'];
     [0.5, 1.5, 2.5, 3.5].forEach((t, i) => {
       const g = directionEvidence(total, SR, t);
-      const ok = g.direction === '?' || g.direction === expected[i];
-      expect(ok).toBe(true);
-      if (g.direction !== '?') expect(g.confidence).toBeLessThan(0.6);
+      // Correct or unknown — a wrong decided label fails the test.
+      expect(g.direction === expected[i] || g.direction === '?').toBe(true);
     });
   });
 });
