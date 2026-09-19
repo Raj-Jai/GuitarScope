@@ -14,6 +14,7 @@ import { analyzeFrames } from './frames';
 import { analyzeWithBranches } from './branches';
 import { decodeChords } from './decode';
 import { transcribeNotes } from './notes';
+import { analyzeRhythm } from './rhythm';
 import { validateAnalysis, type SongAnalysis } from './schema';
 
 function argVal(args: string[], ...names: string[]): string | undefined {
@@ -66,10 +67,15 @@ function main(): void {
   const t1 = performance.now();
   const notes = transcribeNotes(mono, { sampleRate });
   console.log(`  transcribed ${notes.length} note events in ${((performance.now() - t1) / 1000).toFixed(1)}s`);
+  const t2 = performance.now();
+  const rhythm = analyzeRhythm(mono, sampleRate);
+  console.log(
+    `  rhythm: ${rhythm.tempo ? `${rhythm.tempo.bpm} BPM (conf ${rhythm.tempo.confidence})` : 'no tempo'} + ${rhythm.beats.length} beats in ${((performance.now() - t2) / 1000).toFixed(1)}s`,
+  );
   const analysis: SongAnalysis = {
     source: { type: 'file', fileName: input.split('/').pop() ?? input, duration: audioSeconds },
     meta: {
-      version: 1,
+      version: 2,
       sampleRate,
       windowSize: 16384,
       hopSize: 4096,
@@ -80,6 +86,9 @@ function main(): void {
     frames,
     chords,
     notes,
+    tempo: rhythm.tempo ?? undefined,
+    meter: rhythm.meter,
+    beats: rhythm.beats,
   };
   const errors = validateAnalysis(analysis);
   if (errors.length > 0) {
