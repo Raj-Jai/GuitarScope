@@ -342,6 +342,7 @@ export function SongLab() {
       const parsed = JSON.parse(await file.text()) as SongAnalysis;
       const errs = validateAnalysis(parsed);
       if (errs.length > 0) throw new Error(errs.join('; '));
+      setSourceLabel(file.name);
       const dur = analysisRef.current?.duration ?? parsed.source.duration;
       if (Math.abs(dur - parsed.source.duration) > 2) {
         setError(`Warning: analysis duration (${parsed.source.duration.toFixed(1)}s) differs from audio (${dur.toFixed(1)}s).`);

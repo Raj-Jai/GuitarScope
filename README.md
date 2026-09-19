@@ -75,6 +75,19 @@ exists as an offline CLI (`npm run analyze -- --input song.wav ...`,
 with a vocal-robust `--branches multi` mode). Details, fixture recipes
 and validation numbers: [`analyzer/README.md`](analyzer/README.md).
 
+What Song Lab actually promises (and what it doesn't):
+
+- Chords over time with beat grid, tempo (with confidence), and
+  strumming patterns (`D - D U - U D U` style) matched against a small
+  curated library — plus a rolling tab staff with suggested fingerings.
+- Down/up stroke labels are acoustic evidence only; uncertain strokes
+  honestly show `?` instead of a guess (expect `?` on dense or
+  simultaneous attacks).
+- Tab shows **suggested** auto-fingering (concert pitch), never recovered
+  exact fingering — verify by ear. Dense professional arrangements,
+  slides/bends, capo/tuning inference, and neural stem separation are
+  explicitly out of scope.
+
 ## Quick start
 
 Requirements: Node 18+, Chrome/Edge (or any Chromium browser) for the full
