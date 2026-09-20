@@ -39,7 +39,7 @@ function TunerView() {
         <ChordPanel chord={audio.chord} chordName={audio.chordName} running={running} />
       </main>
 
-      <SignalCanvas analyser={audio.analyser} listening={running} />
+      <SignalCanvas analyser={audio.analyser} listening={running} targetFrequency={audio.pitch?.targetFrequency ?? null} />
     </>
   );
 }

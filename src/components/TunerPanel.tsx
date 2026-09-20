@@ -1,18 +1,26 @@
 import type { LivePitch } from '../hooks/useGuitarAudio';
 import { STANDARD_TUNING, describeStringClaim } from '../lib/guitar/tuning';
-import { PERFECT_CENTS } from '../lib/analysis/string-tracker';
+import { classifyTuning } from '../lib/analysis/string-tracker';
 
 function tuningClass(p: LivePitch | null): string {
   if (!p || p.activeString === null) return 'idle';
-  if (p.guidance === 'IN_TUNE') return 'in-tune';
-  if (p.guidance === 'IDLE') return 'idle';
-  // Map CLOSE-equivalent (|cents|<=15) to 'close', else 'off' for red/amber styling.
-  const c = p.displayCents;
-  if (c !== null && Math.abs(c) <= 15) return 'close';
-  return 'off';
+  // Single source of truth: derive the panel class from classifyTuning so the
+  // label, guidance, strip, and meter can never disagree (P0-1).
+  switch (classifyTuning(p.displayCents)) {
+    case 'PERFECT':
+    case 'IN_TUNE':
+      return 'in-tune';
+    case 'SLIGHTLY_FLAT':
+    case 'SLIGHTLY_SHARP':
+      return 'close';
+    case 'IDLE':
+      return 'idle';
+    default:
+      return 'off';
+  }
 }
 
-function statusText(p: LivePitch | null, running: boolean): string {
+function statusText(p: LivePitch | null, running: boolean): string | null {
   if (!running) return 'Press Start to listen';
   if (!p) return 'Listening… pluck a string';
   if (p.activeString === null) {
@@ -30,21 +38,43 @@ function statusText(p: LivePitch | null, running: boolean): string {
     }
   }
   const claim = describeStringClaim(p.openString, p.stringCents ?? 999);
+  // open-match duplicates the target line ("5th string • target 110.00 Hz"),
+  // so no status line is needed (P1-4).
+  if (claim === 'open-match') return null;
+  // near-open is secondary diagnostic info, not a primary tuning instruction.
+  if (claim === 'near-open') return `Near open — tune toward ${p.targetNote ?? 'target'}`;
   const ord = `${p.activeString}${ordinal(p.activeString)} string`;
-  if (claim === 'open-match') return `${ord} • ${p.targetNote ?? ''}`;
-  if (claim === 'near-open') return `${ord} • near open`;
   return `Nearest: ${ord}`;
 }
 
-function guidanceLabel(p: LivePitch | null): { arrow: string; text: string } | null {
+/** True when the status line is secondary diagnostic info (dimmed, P1-6). */
+function statusSecondary(p: LivePitch | null): boolean {
+  if (!p || p.activeString === null) return false;
+  return describeStringClaim(p.openString, p.stringCents ?? 999) === 'near-open';
+}
+
+function guidanceLabel(p: LivePitch | null): { arrow: string; text: string; sub: string | null } | null {
   if (!p || p.activeString === null || p.displayCents === null) return null;
   const c = p.displayCents;
   if (!Number.isFinite(c)) return null;
-  if (Math.abs(c) <= PERFECT_CENTS) return { arrow: '✓', text: 'PERFECT' };
-  if (p.guidance === 'IN_TUNE') return { arrow: '✓', text: 'IN TUNE' };
-  if (p.guidance === 'FLAT') return { arrow: '↑', text: 'TUNE UP' };
-  if (p.guidance === 'SHARP') return { arrow: '↓', text: 'TUNE DOWN' };
-  return null;
+  // Primary instruction stays glanceable (TUNE UP/DOWN); the 5–15¢ band adds
+  // a "slightly" qualifier instead of a competing CLOSE state (P0-1).
+  switch (classifyTuning(c)) {
+    case 'PERFECT':
+      return { arrow: '✓', text: 'PERFECT', sub: null };
+    case 'IN_TUNE':
+      return { arrow: '✓', text: 'IN TUNE', sub: null };
+    case 'SLIGHTLY_FLAT':
+      return { arrow: '↑', text: 'TUNE UP', sub: 'Slightly flat' };
+    case 'SLIGHTLY_SHARP':
+      return { arrow: '↓', text: 'TUNE DOWN', sub: 'Slightly sharp' };
+    case 'FLAT':
+      return { arrow: '↑', text: 'TUNE UP', sub: null };
+    case 'SHARP':
+      return { arrow: '↓', text: 'TUNE DOWN', sub: null };
+    default:
+      return null;
+  }
 }
 
 /** Needle position: clamp string-cents to ±50 for the meter. */
@@ -61,11 +91,21 @@ function stringStateClass(
 ): string {
   if (active === null || active !== stringNumber) return 'idle';
   if (displayCents === null || !Number.isFinite(displayCents)) return 'active';
-  const abs = Math.abs(displayCents);
-  if (abs <= PERFECT_CENTS) return 'active in-tune perfect';
-  if (abs <= 5) return 'active in-tune';
-  if (abs <= 15) return 'active close';
-  return displayCents < 0 ? 'active flat' : 'active sharp';
+  switch (classifyTuning(displayCents)) {
+    case 'PERFECT':
+      return 'active in-tune perfect';
+    case 'IN_TUNE':
+      return 'active in-tune';
+    case 'SLIGHTLY_FLAT':
+    case 'SLIGHTLY_SHARP':
+      return 'active close';
+    case 'FLAT':
+      return 'active flat';
+    case 'SHARP':
+      return 'active sharp';
+    default:
+      return 'active';
+  }
 }
 
 export function TunerPanel({
@@ -87,6 +127,8 @@ export function TunerPanel({
   const centerNote = pitch?.targetNote ?? pitch?.stableNote ?? pitch?.note ?? null;
   const guidance = guidanceLabel(pitch);
   const targetFreq = pitch?.targetFrequency ?? null;
+  const status = statusText(pitch, running);
+  const secondary = statusSecondary(pitch);
 
   // Strip always shows all 6 targets; only active gets live cents.
   const strip = [...STANDARD_TUNING].sort((a, b) => b.stringNumber - a.stringNumber);
@@ -137,9 +179,14 @@ export function TunerPanel({
           {ordinal(active)} string • target {targetFreq.toFixed(2)} Hz
         </div>
       ) : null}
-      <div className="tuner-sub" data-testid="tuner-status">
-        {statusText(pitch, running)}
-      </div>
+      {status !== null ? (
+        <div
+          className={`tuner-sub${secondary ? ' secondary' : ''}`}
+          data-testid="tuner-status"
+        >
+          {status}
+        </div>
+      ) : null}
 
       {guidance && (
         <div
@@ -149,21 +196,32 @@ export function TunerPanel({
         >
           <span className="guidance-arrow">{guidance.arrow}</span> {guidance.text}
           <span className="guidance-cents"> {centsLabel}</span>
+          {guidance.sub ? <span className="guidance-sub">{guidance.sub}</span> : null}
           {held ? <span className="guidance-held"> (held)</span> : null}
         </div>
       )}
 
       <div className="meter" aria-label="Tuning meter">
-        <span className="meter-end flat">FLAT<br />↑ up</span>
+        <span className="meter-end flat" title="Flat — sounds low, raise the pitch">FLAT<br />↑ raise pitch</span>
         <div className="meter-track">
+          {/* Shaded ±5¢ in-tune zone + ±10¢ reference ticks (P0-3). */}
+          <div className="meter-zone" data-testid="tuner-zone" title="In-tune zone (±5¢)" />
+          <div className="meter-tick" style={{ left: '40%' }} title="−10¢" />
+          <div className="meter-tick" style={{ left: '45%' }} title="−5¢" />
+          <div className="meter-tick" style={{ left: '55%' }} title="+5¢" />
+          <div className="meter-tick" style={{ left: '60%' }} title="+10¢" />
           <div className="meter-center" />
-          <div
-            className="meter-needle"
-            data-testid="tuner-needle"
-            style={{ left: `${needlePct(cents)}%` }}
-          />
+          {/* No measurement → no marker: a centered needle would falsely read
+              as "in tune" (final-gate blocker). Zone + center line stay. */}
+          {cents !== null && Number.isFinite(cents) ? (
+            <div
+              className="meter-needle"
+              data-testid="tuner-needle"
+              style={{ left: `${needlePct(cents)}%` }}
+            />
+          ) : null}
         </div>
-        <span className="meter-end sharp">SHARP<br />↓ down</span>
+        <span className="meter-end sharp" title="Sharp — sounds high, lower the pitch">SHARP<br />↓ lower pitch</span>
       </div>
 
       <div className="tuner-grid">

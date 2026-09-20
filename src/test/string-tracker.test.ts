@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   StringTracker,
+  classifyTuning,
   guidanceForCents,
   targetForString,
 } from '../lib/analysis/string-tracker';
@@ -120,5 +121,65 @@ describe('guidance boundaries', () => {
     expect(targetForString(6)?.note).toBe('E2');
     expect(targetForString(1)?.note).toBe('E4');
     expect(targetForString(5)?.frequency).toBeCloseTo(110, 1);
+  });
+});
+
+describe('classifyTuning single user-facing vocabulary (P0-1)', () => {
+  test('exact boundaries: inner band wins', () => {
+    expect(classifyTuning(null)).toBe('IDLE');
+    expect(classifyTuning(NaN)).toBe('IDLE');
+    expect(classifyTuning(Infinity)).toBe('IDLE');
+    expect(classifyTuning(-Infinity)).toBe('IDLE');
+    expect(classifyTuning(0)).toBe('PERFECT');
+    expect(classifyTuning(3)).toBe('PERFECT');
+    expect(classifyTuning(-3)).toBe('PERFECT');
+    expect(classifyTuning(3.0001)).toBe('IN_TUNE');
+    expect(classifyTuning(-3.0001)).toBe('IN_TUNE');
+    expect(classifyTuning(5)).toBe('IN_TUNE');
+    expect(classifyTuning(-5)).toBe('IN_TUNE');
+    expect(classifyTuning(5.0001)).toBe('SLIGHTLY_SHARP');
+    expect(classifyTuning(-5.0001)).toBe('SLIGHTLY_FLAT');
+    expect(classifyTuning(8)).toBe('SLIGHTLY_SHARP');
+    expect(classifyTuning(-12)).toBe('SLIGHTLY_FLAT');
+    expect(classifyTuning(15)).toBe('SLIGHTLY_SHARP');
+    expect(classifyTuning(-15)).toBe('SLIGHTLY_FLAT');
+    expect(classifyTuning(15.0001)).toBe('SHARP');
+    expect(classifyTuning(-15.0001)).toBe('FLAT');
+    expect(classifyTuning(30)).toBe('SHARP');
+    expect(classifyTuning(-30)).toBe('FLAT');
+    expect(classifyTuning(50)).toBe('SHARP');
+    expect(classifyTuning(-50)).toBe('FLAT');
+  });
+
+  test('classification direction always matches the numeric sign', () => {
+    const sweep = [-50, -40, -30, -15.1, -15, -5.1, -5, -3.1, -3, -1, 0, 1, 3, 3.1, 5, 5.1, 15, 15.1, 30, 40, 50];
+    for (const cents of sweep) {
+      const s = classifyTuning(cents);
+      if (s === 'SLIGHTLY_FLAT' || s === 'FLAT') expect(cents).toBeLessThan(0);
+      if (s === 'SLIGHTLY_SHARP' || s === 'SHARP') expect(cents).toBeGreaterThan(0);
+      if (s === 'PERFECT' || s === 'IN_TUNE') expect(Math.abs(cents)).toBeLessThanOrEqual(5);
+    }
+  });
+
+  test('coarse guidance always agrees on direction and deadband', () => {
+    const cases: Array<[number, 'IN_TUNE' | 'FLAT' | 'SHARP']> = [
+      [0, 'IN_TUNE'],
+      [3, 'IN_TUNE'],
+      [5, 'IN_TUNE'],
+      [-5, 'IN_TUNE'],
+      [8, 'SHARP'],
+      [-12, 'FLAT'],
+      [15, 'SHARP'],
+      [-15, 'FLAT'],
+      [30, 'SHARP'],
+      [-30, 'FLAT'],
+    ];
+    for (const [cents, coarse] of cases) {
+      expect(guidanceForCents(cents)).toBe(coarse);
+      const fine = classifyTuning(cents);
+      if (coarse === 'IN_TUNE') expect(['PERFECT', 'IN_TUNE']).toContain(fine);
+      if (coarse === 'FLAT') expect(['SLIGHTLY_FLAT', 'FLAT']).toContain(fine);
+      if (coarse === 'SHARP') expect(['SLIGHTLY_SHARP', 'SHARP']).toContain(fine);
+    }
   });
 });

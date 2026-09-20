@@ -263,6 +263,10 @@ body {
   color: var(--accent);
 }
 
+.tuner.tuner-close .tuner-note {
+  color: var(--warn);
+}
+
 .tuner.tuner-off .tuner-note {
   color: var(--warn);
 }
@@ -272,6 +276,13 @@ body {
   font-size: 14px;
   margin: 6px 0 12px;
   min-height: 20px;
+}
+
+/* Secondary diagnostic status (near-open claim): smaller, dimmer (P1-6). */
+.tuner-sub.secondary {
+  font-size: 12px;
+  opacity: 0.8;
+  margin-bottom: 8px;
 }
 
 .meter {
@@ -303,6 +314,28 @@ body {
   bottom: -3px;
   width: 2px;
   background: var(--accent);
+  transform: translateX(-50%);
+}
+
+/* Shaded ±5¢ in-tune zone: ±50¢ clamp maps ±5¢ to 45%–55% (P0-3). */
+.meter-zone {
+  position: absolute;
+  left: 45%;
+  width: 10%;
+  top: 0;
+  bottom: 0;
+  background: rgba(125, 211, 168, 0.18);
+  border-radius: 999px;
+}
+
+/* ±5¢/±10¢ reference ticks (P0-3). */
+.meter-tick {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--border);
+  opacity: 0.9;
   transform: translateX(-50%);
 }
 
@@ -427,6 +460,15 @@ body {
   font-family: var(--mono);
   font-size: 18px;
   font-weight: 600;
+  color: var(--dim);
+  margin-left: 8px;
+}
+
+.guidance-sub {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
   color: var(--dim);
   margin-left: 8px;
 }

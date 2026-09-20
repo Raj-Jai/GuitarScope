@@ -45,8 +45,39 @@ export const HOLD_MS = 600;
 export const SWITCH_MARGIN_CENTS = 15;
 export const IN_TUNE_CENTS = 5;
 export const PERFECT_CENTS = 3;
+/** Outer edge of the "slightly off — still close" user-facing band. */
+export const CLOSE_CENTS = 15;
+
+/**
+ * Single user-facing tuning classification (P0-1: one vocabulary for the
+ * status label, guidance line, string strip, and meter — no CLOSE-vs-SHARP
+ * split). Coarse machine guidance (`TuneGuidance`) stays FLAT/IN_TUNE/SHARP:
+ * SLIGHTLY_* maps to FLAT/SHARP there, so `guidanceForCents` and
+ * `classifyTuning` always agree on direction and on the ±5¢ deadband.
+ */
+export type TunerState =
+  | 'PERFECT'
+  | 'IN_TUNE'
+  | 'SLIGHTLY_FLAT'
+  | 'SLIGHTLY_SHARP'
+  | 'FLAT'
+  | 'SHARP'
+  | 'IDLE';
+
+export function classifyTuning(cents: number | null): TunerState {
+  if (cents === null || !Number.isFinite(cents)) return 'IDLE';
+  const abs = Math.abs(cents);
+  if (abs <= PERFECT_CENTS) return 'PERFECT';
+  if (abs <= IN_TUNE_CENTS) return 'IN_TUNE';
+  if (abs <= CLOSE_CENTS) return cents < 0 ? 'SLIGHTLY_FLAT' : 'SLIGHTLY_SHARP';
+  return cents < 0 ? 'FLAT' : 'SHARP';
+}
 
 export function guidanceForCents(cents: number | null): TuneGuidance {
+  // Coarse DSP/tracker compatibility API — NOT the UI source of truth.
+  // UI classification must use classifyTuning(); the tested invariant is:
+  //   PERFECT/IN_TUNE -> IN_TUNE, SLIGHTLY_FLAT/FLAT -> FLAT,
+  //   SLIGHTLY_SHARP/SHARP -> SHARP (same deadband, same direction).
   if (cents === null || !Number.isFinite(cents)) return 'IDLE';
   const abs = Math.abs(cents);
   if (abs <= IN_TUNE_CENTS) return 'IN_TUNE';
