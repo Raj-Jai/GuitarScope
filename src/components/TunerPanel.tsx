@@ -1,43 +1,71 @@
 import type { LivePitch } from '../hooks/useGuitarAudio';
-import { describeStringClaim } from '../lib/guitar/tuning';
+import { STANDARD_TUNING, describeStringClaim } from '../lib/guitar/tuning';
+import { PERFECT_CENTS } from '../lib/analysis/string-tracker';
 
-function tuningClass(p: LivePitch): string {
-  if (p.note === null) return 'idle';
-  if (!p.openString || p.tuning === null) return 'note';
-  if (p.tuning === 'IN_TUNE') return 'in-tune';
-  if (p.tuning === 'CLOSE') return 'close';
+function tuningClass(p: LivePitch | null): string {
+  if (!p || p.activeString === null) return 'idle';
+  if (p.guidance === 'IN_TUNE') return 'in-tune';
+  if (p.guidance === 'IDLE') return 'idle';
+  // Map CLOSE-equivalent (|cents|<=15) to 'close', else 'off' for red/amber styling.
+  const c = p.displayCents;
+  if (c !== null && Math.abs(c) <= 15) return 'close';
   return 'off';
 }
 
 function statusText(p: LivePitch | null, running: boolean): string {
   if (!running) return 'Press Start to listen';
-  if (!p) return 'Listening…';
-  switch (p.status) {
-    case 'NO_SIGNAL':
-      return 'No signal — play a note';
-    case 'LOW_SIGNAL':
-      return 'Signal too quiet';
-    case 'TRANSIENT':
-      return 'Listening…';
-    case 'UNCERTAIN':
-      return 'Low confidence';
-    case 'NOTE_DETECTED':
-    case 'OCTAVE_CORRECTED': {
-      const claim = describeStringClaim(p.openString, p.stringCents ?? 999);
-      if (claim === 'open-match') return 'Open string';
-      if (claim === 'near-open') return 'Near open string';
-      return 'Note detected';
+  if (!p) return 'Listening… pluck a string';
+  if (p.activeString === null) {
+    switch (p.status) {
+      case 'NO_SIGNAL':
+        return 'No signal — pluck a string';
+      case 'LOW_SIGNAL':
+        return 'Signal too quiet — pluck louder';
+      case 'TRANSIENT':
+        return 'Listening…';
+      case 'UNCERTAIN':
+        return 'Low confidence — pluck one open string';
+      default:
+        return 'Listening… pluck a string';
     }
-    default:
-      return 'Listening…';
   }
+  const claim = describeStringClaim(p.openString, p.stringCents ?? 999);
+  const ord = `${p.activeString}${ordinal(p.activeString)} string`;
+  if (claim === 'open-match') return `${ord} • ${p.targetNote ?? ''}`;
+  if (claim === 'near-open') return `${ord} • near open`;
+  return `Nearest: ${ord}`;
 }
 
-/** Needle position: clamp cents to ±50 for the meter. */
+function guidanceLabel(p: LivePitch | null): { arrow: string; text: string } | null {
+  if (!p || p.activeString === null || p.displayCents === null) return null;
+  const c = p.displayCents;
+  if (!Number.isFinite(c)) return null;
+  if (Math.abs(c) <= PERFECT_CENTS) return { arrow: '✓', text: 'PERFECT' };
+  if (p.guidance === 'IN_TUNE') return { arrow: '✓', text: 'IN TUNE' };
+  if (p.guidance === 'FLAT') return { arrow: '↑', text: 'TUNE UP' };
+  if (p.guidance === 'SHARP') return { arrow: '↓', text: 'TUNE DOWN' };
+  return null;
+}
+
+/** Needle position: clamp string-cents to ±50 for the meter. */
 function needlePct(cents: number | null): number {
   if (cents === null || !Number.isFinite(cents)) return 50;
   const c = Math.max(-50, Math.min(50, cents));
   return ((c + 50) / 100) * 100;
+}
+
+function stringStateClass(
+  stringNumber: number,
+  active: number | null,
+  displayCents: number | null,
+): string {
+  if (active === null || active !== stringNumber) return 'idle';
+  if (displayCents === null || !Number.isFinite(displayCents)) return 'active';
+  const abs = Math.abs(displayCents);
+  if (abs <= PERFECT_CENTS) return 'active in-tune perfect';
+  if (abs <= 5) return 'active in-tune';
+  if (abs <= 15) return 'active close';
+  return displayCents < 0 ? 'active flat' : 'active sharp';
 }
 
 export function TunerPanel({
@@ -47,27 +75,86 @@ export function TunerPanel({
   pitch: LivePitch | null;
   running: boolean;
 }) {
-  const cls = pitch ? tuningClass(pitch) : 'idle';
+  const cls = tuningClass(pitch);
+  const active = pitch?.activeString ?? null;
   const cents = pitch?.displayCents ?? null;
+  const held = pitch?.held ?? false;
   const centsLabel =
     cents === null || !Number.isFinite(cents)
       ? '—'
-      : `${cents >= 0 ? '+' : ''}${cents.toFixed(1)}`;
-  const noteLabel = pitch?.stableNote ?? pitch?.note ?? null;
+      : `${cents >= 0 ? '+' : ''}${cents.toFixed(1)}¢`;
+  // Center shows TARGET string note (stable), not flickering detected note.
+  const centerNote = pitch?.targetNote ?? pitch?.stableNote ?? pitch?.note ?? null;
+  const guidance = guidanceLabel(pitch);
+  const targetFreq = pitch?.targetFrequency ?? null;
+
+  // Strip always shows all 6 targets; only active gets live cents.
+  const strip = [...STANDARD_TUNING].sort((a, b) => b.stringNumber - a.stringNumber);
+
   return (
-    <section className={`panel tuner tuner-${cls}`} aria-label="Tuner">
-      <div className="panel-title">Tuner</div>
+    <section className={`panel tuner tuner-${cls}${held ? ' tuner-held' : ''}`} aria-label="Tuner">
+      <div className="panel-title">Tuner{held ? ' • held' : ''}</div>
+
+      {/* 6-string strip — GuitarTuna style */}
+      <div className="string-strip" data-testid="tuner-strip" role="list" aria-label="Guitar strings">
+        {strip.map((s) => {
+          const isActive = active === s.stringNumber;
+          const stateCls = stringStateClass(s.stringNumber, active, isActive ? cents : null);
+          const heldCls = held && isActive ? ' held' : '';
+          return (
+            <div
+              key={s.stringNumber}
+              role="listitem"
+              data-testid={`tuner-string-${s.stringNumber}`}
+              data-active={isActive}
+              data-held={held && isActive}
+              className={`string-cell ${stateCls}${heldCls}`}
+              aria-label={`String ${s.stringNumber} ${s.note}${isActive ? ', active' : ''}${held && isActive ? ', held' : ''}`}
+            >
+              <span className="string-num">{s.stringNumber}</span>
+              <span className="string-note">{s.note.replace(/[0-9]/g, '')}</span>
+              <span className="string-oct">{s.note}</span>
+              <span
+                className="string-gauge"
+                style={{ height: `${2 + (s.stringNumber - 1) * 1.1}px` }}
+              />
+              <span className="string-dot" />
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Center: big target note + guidance */}
       <div
-        className={`tuner-note${noteLabel === null ? ' tuner-note-empty' : ''}`}
+        className={`tuner-note${centerNote === null ? ' tuner-note-empty' : ''}`}
         data-testid="tuner-note"
       >
-        {noteLabel ?? '···'}
+        {centerNote ?? '···'}
       </div>
+      {targetFreq !== null && active !== null ? (
+        <div className="tuner-target" data-testid="tuner-target">
+          {active}
+          {ordinal(active)} string • target {targetFreq.toFixed(2)} Hz
+        </div>
+      ) : null}
       <div className="tuner-sub" data-testid="tuner-status">
         {statusText(pitch, running)}
       </div>
+
+      {guidance && (
+        <div
+          className={`tune-guidance guidance-${pitch?.guidance.toLowerCase()}${held ? ' held' : ''}`}
+          data-testid="tuner-guidance"
+          data-held={held}
+        >
+          <span className="guidance-arrow">{guidance.arrow}</span> {guidance.text}
+          <span className="guidance-cents"> {centsLabel}</span>
+          {held ? <span className="guidance-held"> (held)</span> : null}
+        </div>
+      )}
+
       <div className="meter" aria-label="Tuning meter">
-        <span className="meter-end flat">FLAT</span>
+        <span className="meter-end flat">FLAT<br />↑ up</span>
         <div className="meter-track">
           <div className="meter-center" />
           <div
@@ -76,29 +163,30 @@ export function TunerPanel({
             style={{ left: `${needlePct(cents)}%` }}
           />
         </div>
-        <span className="meter-end sharp">SHARP</span>
+        <span className="meter-end sharp">SHARP<br />↓ down</span>
       </div>
+
       <div className="tuner-grid">
         <div className="tuner-cell">
-          <span className="label">Frequency</span>
+          <span className="label">Heard</span>
           <span className="value" data-testid="tuner-freq">
             {pitch?.frequency != null ? `${pitch.frequency.toFixed(2)} Hz` : '—'}
           </span>
         </div>
         <div className="tuner-cell">
-          <span className="label">Cents</span>
+          <span className="label">Off by</span>
           <span className="value" data-testid="tuner-cents">
-            {centsLabel}
+            {centsLabel.replace('¢', '')}
           </span>
         </div>
         <div className="tuner-cell">
           <span className="label">String</span>
           <span className="value" data-testid="tuner-string">
-            {pitch?.stringNumber != null ? (
+            {active != null ? (
               <>
-                {pitch.stringNumber}
-                {ordinal(pitch.stringNumber)} string
-                {describeStringClaim(pitch.openString, pitch.stringCents ?? 999) === 'nearest' && (
+                {active}
+                {ordinal(active)} string
+                {pitch && describeStringClaim(pitch.openString, pitch.stringCents ?? 999) === 'nearest' && (
                   <span className="value dim"> (nearest)</span>
                 )}
               </>
@@ -114,7 +202,7 @@ export function TunerPanel({
           </span>
         </div>
       </div>
-      {pitch?.tuning === 'IN_TUNE' && pitch.openString && (
+      {pitch?.guidance === 'IN_TUNE' && active !== null && (
         <div className="in-tune-badge" data-testid="tuner-in-tune">
           IN TUNE
         </div>

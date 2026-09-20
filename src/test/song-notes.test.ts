@@ -58,9 +58,14 @@ describe('note transcription', () => {
   });
 
   test('dyad -> NoteGroup with both pitches', () => {
-    const total = new Float32Array(SR * 1);
-    noteAt(164.8138, 0.2, 0.6, total);
-    noteAt(196.0, 0.2, 0.6, total);
+    const total = new Float32Array(Math.floor(SR * 1.4));
+    const dyNote = (freq: number, startSec: number): void => {
+      const part = harmonicTone(freq, { sampleRate: SR, duration: 0.9, attack: 0.006, decay: 5 });
+      const s0 = Math.floor(startSec * SR);
+      for (let i = 0; i < part.length && s0 + i < total.length; i++) total[s0 + i] += part[i] * 0.6;
+    };
+    dyNote(164.8138, 0.2);
+    dyNote(196.0, 0.2);
     const events = transcribeNotes(total);
     expect(events.length).toBe(1);
     expect(isNoteGroup(events[0])).toBe(true);

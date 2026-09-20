@@ -4,6 +4,7 @@ import {
   assignSequence,
   candidatesFor,
   chordsToTab,
+  estimatePitchShift,
   notesToTab,
   pcsInSpan,
 } from '../../analyzer/tab-assign';
@@ -165,5 +166,69 @@ describe('assembleTab', () => {
     ];
     expect(pcsInSpan(notes, 0, 1)).toEqual([9]);
     expect(pcsInSpan(notes, 5, 6)).toEqual([]);
+  });
+});
+
+describe('discrete pitchShift hypotheses (supervisor TABFIX order)', () => {
+  // Open-string passage in standard tuning: shift 0 is the idiomatic truth.
+  const opens = [40, 45, 50, 55, 59, 64].map((midi, i) => ({
+    onset: i, offset: i + 0.5, midis: [midi],
+  }));
+  // Same physical shapes on a guitar tuned a whole step up: concert +2.
+  const upTwo = opens.map((g) => ({ ...g, midis: [g.midis[0] + 2] }));
+  // Same shapes tuned a whole step down: concert -2.
+  const downTwo = [43, 48, 53, 57, 62].map((midi, i) => ({
+    onset: i, offset: i + 0.5, midis: [midi],
+  }));
+
+  test('standard opens -> shift 0 with confidence', () => {
+    const est = estimatePitchShift(opens, NO_CHORD);
+    expect(est.semitones).toBe(0);
+    expect(est.confidence).toBeGreaterThanOrEqual(0.6);
+  });
+
+  test('whole-step-up concert pitches -> shift +2 with confidence', () => {
+    const est = estimatePitchShift(upTwo, NO_CHORD);
+    expect(est.semitones).toBe(2);
+    expect(est.confidence).toBeGreaterThanOrEqual(0.6);
+  });
+
+  test('whole-step-down concert pitches -> shift -2 with confidence', () => {
+    const est = estimatePitchShift(downTwo, NO_CHORD);
+    expect(est.semitones).toBe(-2);
+    expect(est.confidence).toBeGreaterThanOrEqual(0.6);
+  });
+
+  test('chromatic cluster -> ambiguous, low confidence, never auto-apply', () => {
+    const chromatic = [61, 62, 63].map((midi, i) => ({
+      onset: i, offset: i + 0.5, midis: [midi],
+    }));
+    const est = estimatePitchShift(chromatic, NO_CHORD);
+    expect(est.confidence).toBeLessThan(0.4);
+  });
+
+  test('shift never alters detected midis, only suggested frets', () => {
+    const events = (shift: number): number[][] =>
+      notesToTab(
+        upTwo.map((g) => ({
+          onset: g.onset, offset: g.offset, duration: 0.5,
+          midi: g.midis[0], note: 'x', frequency: 440, confidence: 0.9, source: 'yin' as const,
+        })),
+        NO_CHORD,
+        { pitchShift: shift },
+      ).map((t) => [t.notes[0].midi, t.notes[0].fret]);
+    const plain = events(0);
+    const shifted = events(2);
+    // Same concert midis in both hypotheses ...
+    expect(shifted.map(([m]) => m)).toEqual(plain.map(([m]) => m));
+    // ... but the +2 hypothesis fingers opens (0s) where plain frets 2s.
+    expect(plain.every(([, f]) => f === 2)).toBe(true);
+    expect(shifted.every(([, f]) => f === 0)).toBe(true);
+  });
+
+  test('tuningShift alias behaves identically to pitchShift', () => {
+    const a = assignSequence(opens, NO_CHORD, { pitchShift: 1 });
+    const b = assignSequence(opens, NO_CHORD, { tuningShift: 1 });
+    expect(a.map((g) => g.positions)).toEqual(b.map((g) => g.positions));
   });
 });

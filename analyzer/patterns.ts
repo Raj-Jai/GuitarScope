@@ -73,24 +73,22 @@ export function quantizeStrums(
   const beatDur = median(gaps);
   const eighth = beatDur / 2;
   const starts = barStarts(beats);
-  const songEnd = beats[beats.length - 1].time + beatDur;
+  const barDur = starts.length > 1 ? starts[1] - starts[0] : beatDur * 4;
+  // Tolerance so early-detected attacks just before a boundary still
+  // belong to it (onset detection + walkback routinely land ±30 ms).
+  const tol = eighth * 0.25;
   for (const s of strums) {
     if (s.direction !== 'D' && s.direction !== 'U' && s.direction !== '?') continue;
-    // Containing bar.
-    let bar = -1;
-    for (let b = 0; b < starts.length; b++) {
-      const barEnd = b + 1 < starts.length ? starts[b + 1] : songEnd;
-      if (s.time >= starts[b] && s.time < barEnd) {
-        bar = b;
-        break;
-      }
-    }
-    if (bar < 0) {
+    // Containing bar (arithmetic + clamp: strict >= comparisons drop
+    // attacks detected milliseconds before the grid line).
+    let bar = Math.floor((s.time - starts[0] + tol) / barDur);
+    if (bar < 0 || bar >= starts.length) {
       unquantized.push(s);
       continue;
     }
     const slotFloat = (s.time - starts[bar]) / eighth;
-    const slot = Math.round(slotFloat);
+    // Normalize -0 (Math.round of tiny negatives) to +0 for map keys.
+    const slot = Math.round(slotFloat) + 0;
     if (slot < 0 || slot > 7 || Math.abs(slotFloat - slot) > 0.25) {
       unquantized.push(s);
       continue;

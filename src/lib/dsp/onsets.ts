@@ -11,10 +11,18 @@ export interface OnsetOptions {
   hop?: number; // default 512 (~10.7ms @48k)
   /** Minimum gap between onsets in seconds (default 0.08). */
   minGap?: number;
-  /** Peak threshold above local median, as fraction of global max (default 0.08). */
+  /**
+   * Peak threshold above local median, as fraction of global max
+   * (default 0.15). Decay-hash bumps in sustained textures sit below
+   * this; real pluck/strum attacks clear it. Measured, not guessed.
+   */
   delta?: number;
   /** Absolute flux floor (default 0.5). */
   floor?: number;
+  /** Walk back from flux peak to attack start (default true). */
+  refineAttack?: boolean;
+  /** Max walkback in seconds (default 0.06). */
+  maxWalkback?: number;
 }
 
 /** Onset-strength envelope (one value per STFT frame). */
@@ -53,7 +61,7 @@ export function pickOnsets(
   hop: number,
   options: OnsetOptions & { frameSize?: number } = {},
 ): number[] {
-  const { minGap = 0.08, delta = 0.08, floor = 0.5, frameSize = 2048 } = options;
+  const { minGap = 0.08, delta = 0.15, floor = 0.5, frameSize = 2048, refineAttack = true, maxWalkback = 0.06 } = options;
   let max = 0;
   for (let i = 0; i < envelope.length; i++) if (envelope[i] > max) max = envelope[i];
   const onsets: number[] = [];
@@ -76,7 +84,23 @@ export function pickOnsets(
     }
     if (!isPeak) continue;
     // Frame CENTER time: the transient sits inside the window, not at its start.
-    const t = (i * hop + frameSize / 2) / sampleRate;
+    let t = (i * hop + frameSize / 2) / sampleRate;
+    if (refineAttack) {
+      // Masked attacks peak late: walk back toward the attack start, but
+      // stop at the first valley (flux dropping below half on the way
+      // down = boundary with previous activity) or background (< 15%),
+      // bounded. A blind fixed walkback overshoots into previous decays.
+      const peakV = envelope[i];
+      let j = i;
+      while (j > 0 && ((i - j) * hop) / sampleRate <= maxWalkback) {
+        const prev = envelope[j - 1];
+        const cur = envelope[j];
+        if (prev < peakV * 0.15) break;
+        if (prev < cur * 0.5) break;
+        j--;
+      }
+      t = (j * hop + frameSize / 2) / sampleRate;
+    }
     if (t - lastTime < minGap) continue;
     onsets.push(t);
     lastTime = t;

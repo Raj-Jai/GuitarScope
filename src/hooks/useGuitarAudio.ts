@@ -9,10 +9,12 @@ import type {
 } from '../lib/audio/protocol';
 import type { DetectionResult } from '../lib/pitch/pitch-detector';
 import type { ChordResult } from '../lib/analysis/polyphonic';
-import { TunerSmoother } from '../lib/analysis/tuner-smoother';
+import { StringTracker, type TuneGuidance } from '../lib/analysis/string-tracker';
 import { LabelStabilizer } from '../lib/analysis/temporal-smoothing';
 import { ChordStabilityGate } from '../lib/analysis/chord-stability';
 import { SessionLog } from '../lib/analysis/session-log';
+
+export type { TuneGuidance };
 
 export type AudioStatus =
   | 'idle'
@@ -22,10 +24,17 @@ export type AudioStatus =
   | 'error';
 
 export interface LivePitch extends DetectionResult {
-  /** Smoothed cents for the needle (null when unusable). */
+  /** Smoothed cents vs ACTIVE string target (null when idle). GuitarTuna-style. */
   displayCents: number | null;
   /** Majority-vote stabilized note label. */
   stableNote: string | null;
+  /** Latched string (differs from instantaneous stringNumber during holds). */
+  activeString: 1 | 2 | 3 | 4 | 5 | 6 | null;
+  targetFrequency: number | null;
+  targetNote: string | null;
+  guidance: TuneGuidance;
+  /** True when showing held (stale) value during 600ms dropout — UI should dim. */
+  held: boolean;
 }
 
 export interface LiveStats {
@@ -88,7 +97,7 @@ export function useGuitarAudio(): {
   const workerRef = useRef<Worker | null>(null);
   const micRef = useRef<MicController | null>(null);
   const demoRef = useRef<DemoProgram | null>(null);
-  const smootherRef = useRef(new TunerSmoother());
+  const trackerRef = useRef(new StringTracker());
   const noteStabRef = useRef(new LabelStabilizer(5));
   const chordGateRef = useRef(new ChordStabilityGate());
   const resultTimesRef = useRef<number[]>([]);
@@ -112,11 +121,26 @@ export function useGuitarAudio(): {
     const resultsPerSec = times.length >= 2 ? (1000 * (times.length - 1)) / (now - times[0]) : 0;
 
     const p = msg.pitch;
-    const displayCents = smootherRef.current.push(p.note, p.cents);
+    const tracked = trackerRef.current.push({
+      stringNumber: p.stringNumber,
+      stringCents: p.stringCents,
+      confidence: p.confidence,
+      status: p.status,
+      timestampMs: now,
+    });
     const stableNote = noteStabRef.current.push(
       p.status === 'NOTE_DETECTED' || p.status === 'OCTAVE_CORRECTED' ? p.note : null,
     );
-    setPitch({ ...p, displayCents, stableNote });
+    setPitch({
+      ...p,
+      displayCents: tracked.displayCents,
+      stableNote,
+      activeString: tracked.activeString,
+      targetFrequency: tracked.targetFrequency,
+      targetNote: tracked.targetNote,
+      guidance: tracked.guidance,
+      held: tracked.held,
+    });
 
     // Session log (bounded ring; stats throttled to ~0.5 Hz).
     const t = now - sessionStartRef.current;
@@ -236,7 +260,7 @@ export function useGuitarAudio(): {
   }, []);
 
   const resetDisplay = useCallback(() => {
-    smootherRef.current.reset();
+    trackerRef.current.reset();
     noteStabRef.current.reset();
     chordGateRef.current.reset();
     resultTimesRef.current = [];
