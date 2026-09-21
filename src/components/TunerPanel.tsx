@@ -166,40 +166,51 @@ export function TunerPanel({
         })}
       </div>
 
-      {/* Center: big target note + guidance */}
-      <div
-        className={`tuner-note${centerNote === null ? ' tuner-note-empty' : ''}`}
-        data-testid="tuner-note"
-      >
-        {centerNote ?? '···'}
+      {/* Center: big target note + guidance.
+          Fixed readout shell: every zone always exists so the panel, meter,
+          and cards never move between states — only contents swap. */}
+      <div className="tuner-readout" data-testid="tuner-readout">
+        <div className="tuner-note-zone">
+          <div
+            className={`tuner-note${centerNote === null ? ' tuner-note-empty' : ''}`}
+            data-testid="tuner-note"
+          >
+            {centerNote ?? '···'}
+          </div>
+        </div>
+        <div className="tuner-target-zone" data-testid="tuner-target-zone">
+          {targetFreq !== null && active !== null ? (
+            <div className="tuner-target" data-testid="tuner-target">
+              {active}
+              {ordinal(active)} string • target {targetFreq.toFixed(2)} Hz
+            </div>
+          ) : null}
+        </div>
+        <div className="tuner-status-zone" data-testid="tuner-status-zone">
+          {status !== null ? (
+            <div
+              className={`tuner-sub${secondary ? ' secondary' : ''}`}
+              data-testid="tuner-status"
+            >
+              {status}
+            </div>
+          ) : null}
+        </div>
+        <div className="tuner-guidance-zone" data-testid="tuner-guidance-zone">
+          {guidance && (
+            <div
+              className={`tune-guidance guidance-${pitch?.guidance.toLowerCase()}${held ? ' held' : ''}`}
+              data-testid="tuner-guidance"
+              data-held={held}
+            >
+              <span className="guidance-arrow">{guidance.arrow}</span> {guidance.text}
+              <span className="guidance-cents"> {centsLabel}</span>
+              {guidance.sub ? <span className="guidance-sub">{guidance.sub}</span> : null}
+              {held ? <span className="guidance-held"> (held)</span> : null}
+            </div>
+          )}
+        </div>
       </div>
-      {targetFreq !== null && active !== null ? (
-        <div className="tuner-target" data-testid="tuner-target">
-          {active}
-          {ordinal(active)} string • target {targetFreq.toFixed(2)} Hz
-        </div>
-      ) : null}
-      {status !== null ? (
-        <div
-          className={`tuner-sub${secondary ? ' secondary' : ''}`}
-          data-testid="tuner-status"
-        >
-          {status}
-        </div>
-      ) : null}
-
-      {guidance && (
-        <div
-          className={`tune-guidance guidance-${pitch?.guidance.toLowerCase()}${held ? ' held' : ''}`}
-          data-testid="tuner-guidance"
-          data-held={held}
-        >
-          <span className="guidance-arrow">{guidance.arrow}</span> {guidance.text}
-          <span className="guidance-cents"> {centsLabel}</span>
-          {guidance.sub ? <span className="guidance-sub">{guidance.sub}</span> : null}
-          {held ? <span className="guidance-held"> (held)</span> : null}
-        </div>
-      )}
 
       <div className="meter" aria-label="Tuning meter">
         <span className="meter-end flat" title="Flat — sounds low, raise the pitch">FLAT<br />↑ raise pitch</span>
@@ -260,11 +271,15 @@ export function TunerPanel({
           </span>
         </div>
       </div>
-      {pitch?.guidance === 'IN_TUNE' && active !== null && (
-        <div className="in-tune-badge" data-testid="tuner-in-tune">
-          IN TUNE
-        </div>
-      )}
+      {/* Fixed badge shell: always present so the IN-TUNE badge never
+          shifts the cards when it appears/disappears across ±5¢. */}
+      <div className="tuner-badge-zone" data-testid="tuner-badge-zone">
+        {pitch?.guidance === 'IN_TUNE' && active !== null ? (
+          <div className="in-tune-badge" data-testid="tuner-in-tune">
+            IN TUNE
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }

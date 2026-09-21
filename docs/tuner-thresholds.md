@@ -58,8 +58,29 @@ never shown directly; the UI only renders `classifyTuning`.)
 - Within `HOLD_MS` (600 ms) of the last valid frame, the panel keeps showing
   the last value dimmed (`tuner-held`, `(held)` marker) instead of flashing.
 - After the hold expires the panel goes idle (`No signal`, `Signal too
-  quiet`, `Low confidence — pluck one open string`) with no guidance badge.
+  quiet`, `Low confidence — pluck one open string`) with no guidance badge
+  and no needle marker.
 - Pick-attack transients: the first frames do not latch (2-frame rule), and
   the latch, once acquired, is the correct string — no wrong-string flash.
 - Confidence/hysteresis decisions live in the tracker/DSP layer, never in
   `TunerPanel`, which purely renders `classifyTuning` + tracker state.
+
+## Layout stability contract (flicker-free shells)
+
+The tuner deliberately reserves the maximum readout/badge footprint.
+State changes may alter content visibility, but must never alter panel
+height or the vertical position of the meter.
+
+`TunerPanel` renders fixed shells — `.tuner-readout` (note/target/status/guidance zones)
+and `.tuner-badge-zone` — that always exist; only their contents swap via
+conditional content, never mount/unmount geometry. No height/margin/padding
+animation anywhere in the tuner.
+
+- Desktop: panel 573.5px, meter Y constant in all 14 states (not 523.5:
+  far states need status+guidance simultaneously and the badge reserves
+  space — shrinking to 523.5 would require cutting content).
+- ≤560px: two-line guidance zone + single-column cards (taller but constant
+  within mobile).
+- Regression: `tuner-boundaries.test.tsx` asserts shells always render and
+  content stays conditional; the Playwright flicker probe asserts
+  max−min panel height and meter Y ≤ 1px across all states.

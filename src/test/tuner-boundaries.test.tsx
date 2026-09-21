@@ -131,7 +131,7 @@ describe('rendered boundary matrix (P2-b)', () => {
     };
     const idleHtml = render(idle);
     expect(idleHtml).toContain('Signal too quiet — pluck louder');
-    expect(idleHtml).not.toContain('tuner-guidance');
+    expect(idleHtml).not.toContain('data-testid="tuner-guidance"');
     expect(idleHtml).not.toContain('IN TUNE');
     // Final-gate blocker: no measurement → no needle marker (a centered
     // needle would falsely read as "in tune"). Zone + center line remain.
@@ -146,6 +146,76 @@ describe('rendered boundary matrix (P2-b)', () => {
       expect(html.match(/data-testid="tuner-needle"/g)).toHaveLength(1);
     }
   });
+});
+
+describe('layout shells: geometry never depends on state (flicker-free)', () => {
+  const idleLow: LivePitch = {
+    ...a2Pitch(0),
+    status: 'LOW_SIGNAL',
+    frequency: null,
+    note: null,
+    cents: null,
+    stringCents: null,
+    stringNumber: null,
+    openString: false,
+    tuning: null,
+    confidence: 0.1,
+    displayCents: null,
+    stableNote: null,
+    activeString: null,
+    targetFrequency: null,
+    targetNote: null,
+    guidance: 'IDLE',
+  };
+  const cases: Array<{ name: string; pitch: LivePitch | null; zones: string[]; noInner: string[] }> = [
+    {
+      name: 'idle',
+      pitch: idleLow,
+      zones: ['tuner-readout', 'tuner-target-zone', 'tuner-status-zone', 'tuner-guidance-zone', 'tuner-badge-zone', 'tuner-note', 'tuner-zone'],
+      noInner: ['tuner-target', 'tuner-guidance', 'tuner-in-tune', 'tuner-needle'],
+    },
+    {
+      name: 'perfect',
+      pitch: a2Pitch(0),
+      zones: ['tuner-readout', 'tuner-target-zone', 'tuner-status-zone', 'tuner-guidance-zone', 'tuner-badge-zone', 'tuner-note'],
+      noInner: ['tuner-status'],
+    },
+    {
+      name: 'slightly-sharp',
+      pitch: a2Pitch(8),
+      zones: ['tuner-readout', 'tuner-target-zone', 'tuner-status-zone', 'tuner-guidance-zone', 'tuner-badge-zone'],
+      noInner: ['tuner-status', 'tuner-in-tune'],
+    },
+    {
+      name: 'flat-far',
+      pitch: { ...a2Pitch(-30), openString: true },
+      zones: ['tuner-readout', 'tuner-target-zone', 'tuner-status-zone', 'tuner-guidance-zone', 'tuner-badge-zone'],
+      noInner: ['tuner-in-tune'],
+    },
+    {
+      name: 'nearest',
+      pitch: { ...a2Pitch(45), openString: false, stringCents: 200 },
+      zones: ['tuner-readout', 'tuner-target-zone', 'tuner-status-zone', 'tuner-guidance-zone', 'tuner-badge-zone'],
+      noInner: ['tuner-in-tune'],
+    },
+    {
+      name: 'held',
+      pitch: { ...a2Pitch(-12), held: true },
+      zones: ['tuner-readout', 'tuner-target-zone', 'tuner-status-zone', 'tuner-guidance-zone', 'tuner-badge-zone'],
+      noInner: ['tuner-status', 'tuner-in-tune'],
+    },
+  ];
+
+  for (const c of cases) {
+    test(`${c.name}: shells always present, content conditional`, () => {
+      const html = render(c.pitch);
+      for (const z of c.zones) expect(html).toContain(`data-testid="${z}"`);
+      for (const n of c.noInner) expect(html).not.toContain(`data-testid="${n}"`);
+      // Exactly one needle iff there is a measurement.
+      const needles = html.match(/data-testid="tuner-needle"/g) ?? [];
+      expect(needles).toHaveLength(c.pitch?.displayCents == null ? 0 : 1);
+    });
+  }
 });
 
 describe('hysteresis around boundaries (finding 9)', () => {

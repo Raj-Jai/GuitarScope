@@ -259,6 +259,59 @@ body {
   letter-spacing: 4px;
 }
 
+/* ---- Flicker-free readout shells: zones always exist, only contents swap.
+   Inner margins are zeroed here (zones carry the spacing) so present and
+   absent content occupy identical geometry. Shell height is calibrated so the
+   panel reproduces the 523.5px active maximum in every state. ---- */
+.tuner-readout {
+  height: 185px;
+  flex: 0 0 185px;
+  overflow: hidden;
+}
+
+.tuner-note-zone {
+  height: 84px;
+  display: flex;
+  align-items: center;
+}
+
+.tuner-target-zone {
+  min-height: 15px;
+}
+
+.tuner .tuner-target-zone .tuner-target {
+  margin: 0;
+}
+
+.tuner-status-zone {
+  min-height: 20px;
+  margin: 6px 0 12px;
+}
+
+.tuner .tuner-status-zone .tuner-sub {
+  margin: 0;
+  min-height: 0;
+}
+
+.tuner-guidance-zone {
+  min-height: 36px;
+  margin: 4px 0 8px;
+}
+
+.tuner .tuner-guidance-zone .tune-guidance {
+  margin: 0;
+}
+
+.tuner-badge-zone {
+  height: 38px;
+  flex: 0 0 38px;
+  margin-top: 12px;
+}
+
+.tuner .tuner-badge-zone .in-tune-badge {
+  margin-top: 0;
+}
+
 .tuner.tuner-in-tune .tuner-note {
   color: var(--accent);
 }
@@ -842,4 +895,38 @@ body {
   width: 2px;
   background: var(--accent);
   pointer-events: none;
+}
+
+/* ---- Narrow screens (must stay last: overrides base grid/guidance rules).
+   Guidance wraps, so the zone reserves two lines and the shell grows by the
+   same amount — geometry stays constant within mobile. ---- */
+@media (max-width: 560px) {
+  .tuner-readout {
+    height: 211px;
+    flex-basis: 211px;
+  }
+
+  .tuner-guidance-zone {
+    min-height: 62px;
+  }
+
+  .tune-guidance {
+    font-size: 24px;
+  }
+
+  .tune-guidance .guidance-cents {
+    font-size: 15px;
+  }
+
+  .tune-guidance .guidance-sub,
+  .tune-guidance .guidance-held {
+    display: block;
+    font-size: 12px;
+    margin: 2px 0 0 34px;
+  }
+
+  /* Single-column metric cards: the "(nearest)" qualifier never wraps. */
+  .tuner-grid {
+    grid-template-columns: 1fr;
+  }
 }
